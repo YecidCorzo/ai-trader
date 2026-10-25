@@ -1,0 +1,20 @@
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Secretos
+.env
+.env.*
+!.env.example
+
+# Archivos locales
+.DS_Store
+.vscode/
+*.save
+*.bak
+.pytest_cache/
+.coverage
+htmlcov/

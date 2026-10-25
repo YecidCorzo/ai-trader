@@ -1,0 +1,321 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI TRADER YECCOR</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0b1020;
+      color: #e8edf8;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 22px 5%;
+      border-bottom: 1px solid #263047;
+    }
+    h1 { margin: 0; font-size: 23px; }
+    .muted { color: #96a4bc; }
+    .demo {
+      color: #65e6a5;
+      border: 1px solid #287953;
+      padding: 7px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+    main { max-width: 1200px; margin: auto; padding: 28px 20px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: #131b2e;
+      border: 1px solid #263047;
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .value { font-size: 27px; font-weight: 700; margin-top: 12px; }
+    .green { color: #65e6a5; }
+    .red { color: #ff7585; }
+    .chart {
+      height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: repeating-linear-gradient(
+        0deg, #172137 0, #172137 1px, transparent 1px, transparent 44px
+      );
+      color: #96a4bc;
+      margin-top: 18px;
+      text-align: center;
+    }
+    .actions { display: flex; gap: 12px; margin-top: 18px; }
+    button {
+      flex: 1; padding: 13px; border: 0; border-radius: 9px;
+      color: white; font-weight: 700; cursor: pointer;
+    }
+    .long { background: #13845c; }
+    .short { background: #b83c50; }
+    .status { margin-top: 12px; font-size: 14px; color: #96a4bc; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td {
+      text-align: left; padding: 13px 8px;
+      border-bottom: 1px solid #263047; font-size: 14px;
+    }
+    @media (max-width: 700px) {
+      .grid { grid-template-columns: 1fr; }
+      header { padding: 18px; }
+      main { padding: 18px 12px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>◈ AI TRADER</h1>
+    <span class="demo">● PAPER TRADING</span>
+  </header>
+
+  <main>
+    <p class="muted">Panel de control / Mercado cripto</p>
+
+    <section class="grid">
+      <div class="card">
+        <div class="muted">Mercado</div>
+        <div class="value">SOL / USDT</div>
+        <div id="live-price">Cargando precio ...</div>            
+      </div>
+      <div class="card">
+        <div class="muted">Balance demo</div>
+        <div class="value">10,000 USDT</div>
+        <p class="muted">Capital virtual inicial</p>
+      </div>
+
+      <div class="card">
+        <div class="muted">Estado del bot</div>
+        <div class="value green">Preparado</div>
+        <p class="muted">Sin órdenes reales</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>SOL / USDT <span class="muted">· Gráfico</span></h2>
+     <div id="candles-chart" style="width:100%; height: 420px; padding-bottom: 20px; box-sizing: border-box;"></div>        
+      <div class="actions">
+        <button class="long" onclick="signal('LONG')">Señal LONG</button>
+        <button class="short" onclick="signal('SHORT')">Señal SHORT</button>
+      </div>
+      <div id="signal-box" class="signal-box">Señal: Cargando...
+      </div>
+      <div id="status" class="status">Modo demo: no se ejecutan operaciones.</div>
+    </section>
+
+    <section class="card">
+      <h2>Posiciones</h2>
+      <table>
+        <thead>
+          <tr><th>Par</th><th>Dirección</th><th>Estado</th></tr>
+        </thead>
+        <tbody id="positions">
+          <tr><td colspan="3" class="muted">No hay posiciones abiertas</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    async function loadDashboard() {
+    const status = document.getElementById("status");
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/api/dashboard"
+      );
+
+      if (!response.ok) {
+        throw new Error("Error de API: " + response.status);
+      }
+
+      const data = await response.json();
+
+      status.textContent =
+        "API conectada · " + data.symbol +
+        " · Modo " + data.mode.toUpperCase() +
+        " · Datos simulados";
+    } catch (error) {
+      status.textContent =
+        "API no conectada. Comprueba que FastAPI esté ejecutándose.";
+    }
+  }
+
+    function signal(direction) {
+    document.getElementById("status").textContent =
+      "Señal de prueba: " + direction +
+      ". No se ha enviado ninguna orden al exchange.";
+  }
+
+async function loadPrice() {
+  const priceElement = document.getElementById("live-price");
+  priceElement.textContent= "Consultando Binance";
+
+  try {
+    const response = await fetch(
+      "http://127.0.0.1:8000/api/price"
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || data.error) {
+      priceElement.textContent = "Precio no disponible";
+      return;
+    }
+
+    priceElement.textContent =
+      Number(data.price).toFixed(2) + " USDT";
+
+  } catch (error) {
+    priceElement.textContent = "Error de conexión";
+  }
+}
+
+loadDashboard();
+loadPrice();
+setInterval(loadPrice, 5000);
+
+
+let candleChart;
+let candleSeries;
+
+async function loadCandles() {
+  const container = document.getElementById("candles-chart");
+  if (!container || !window.LightweightCharts) return;
+
+  try {
+    const response = await fetch("/api/candles");
+    const data = await response.json();
+
+    if (!response.ok || data.error || !data.candles?.length) {
+      container.textContent = "Velas no disponibles";
+      return;
+    }
+
+    if (!candleChart) {
+      candleChart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 420,
+        layout: {
+          background: { color: "#111827" },
+          textColor: "#d1d5db"
+        },
+        grid: {
+          vertLines: { color: "#273244" },
+          horzLines: { color: "#273244" }
+        },
+
+timeScale: {
+  timeVisible: true,
+  secondsVisible: false,
+  rightOffset: 3,
+  barSpacing: 10,
+  fixLeftEdge: true,
+  fixRightEdge: true
+},
+localization: {
+  timeFormatter: (timestamp) =>
+    new Date(timestamp * 1000).toLocaleTimeString("sv-SE", {
+      timeZone: "Europe/Stockholm",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    })
+},
+    });
+
+      candleSeries = candleChart.addSeries(
+        LightweightCharts.CandlestickSeries,
+        {
+          upColor: "#22c55e",
+          downColor: "#ef4444",
+          borderVisible: false,
+          wickUpColor: "#22c55e",
+          wickDownColor: "#ef4444"
+        }
+      );
+
+      window.addEventListener("resize", () => {
+        if (candleChart) {
+          candleChart.applyOptions({
+            width: container.clientWidth
+          });
+        }
+      });
+    }
+
+    candleSeries.setData(
+      data.candles.map(c => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close
+      }))
+    );
+
+    candleChart.timeScale().fitContent();
+    candleChart.applyOptions({
+  timeScale: {
+    minimumHeight: 40,
+    borderVisible: true
+  }
+});
+  } catch (error) {
+    console.error("Error cargando velas:", error);
+    container.textContent = "Error al cargar el gráfico";
+  }
+}
+
+loadCandles();
+setInterval(loadCandles, 60000);
+async function loadSignal() {
+  const signalBox = document.getElementById("signal-box");
+
+  try {
+    const response = await fetch("/api/signal");
+    const data = await response.json();
+
+    if (!response.ok || data.error) {
+      signalBox.textContent = "Señal no disponible";
+      return;
+    }
+
+    signalBox.textContent =
+      "Señal: " +
+      data.signal +
+      " · RSI: " +
+      data.rsi.toFixed(2) +
+      " · EMA9: " +
+      data.ema9.toFixed(2) +
+      " · EMA21: " +
+      data.ema21.toFixed(2);
+
+  } catch (error) {
+    console.error("Error cargando señal:", error);
+    signalBox.textContent = "Error al cargar señal";
+  }
+}
+
+loadSignal();
+setInterval(loadSignal, 30000);
+
+</script>
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+</body>
+</html>

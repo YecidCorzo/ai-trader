@@ -1,0 +1,15 @@
+
+# AI TRADER
+
+Dashboard de trading con IA.
+
+## Funciones previstas
+
+- Gráfico SOL/USDT
+- Señales LONG y SHORT
+- Gestión de posiciones
+- Panel de riesgo
+- Paper trading
+- Integración con TradingView
+- Alertas de Discord
+- Backtesting de estrategias
