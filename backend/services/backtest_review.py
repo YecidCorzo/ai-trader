@@ -1,6 +1,14 @@
 from skills.backtest_expert.evaluate_backtest import evaluate
 
 
+def _candle_timestamp(candle):
+    if isinstance(candle, dict):
+        return candle.get("time", candle.get("timestamp"))
+    if isinstance(candle, (list, tuple)) and candle:
+        return candle[0]
+    return None
+
+
 def review_backtest(result, candles, parameter_count=8):
     trades = result.get("trades", [])
     winners = [trade for trade in trades if float(trade.get("net_pnl", 0)) > 0]
@@ -18,8 +26,8 @@ def review_backtest(result, candles, parameter_count=8):
 
     years_tested = 0.0
     if len(candles) >= 2:
-        first = candles[0].get("time")
-        last = candles[-1].get("time")
+        first = _candle_timestamp(candles[0])
+        last = _candle_timestamp(candles[-1])
         if first is not None and last is not None:
             divisor = 1000 if float(last) > 10_000_000_000 else 1
             years_tested = max(0.0, (float(last) - float(first)) / divisor / 31_557_600)
