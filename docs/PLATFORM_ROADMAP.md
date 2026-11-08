@@ -11,6 +11,16 @@ Evolve the existing AI Trader into a personal financial intelligence platform wh
 
 The application is an analytical and decision-support tool. It must not imply guaranteed returns or execute real trades without a separately approved and explicitly designed capability.
 
+## Currency policy
+
+- **SEK is the platform's base/reporting currency.**
+- Transactions and assets may retain their original currency, initially including SEK, EUR, USD and COP.
+- Never overwrite the original transaction amount or currency when converting.
+- Store the FX rate, rate direction, source/provider, effective timestamp and retrieval timestamp used for each conversion.
+- Consolidated balances, net worth, reports and portfolio summaries are presented in SEK.
+- If a required FX rate is unavailable or stale, show the value as unavailable/estimated with a clear status; never silently assume parity or invent a rate.
+- Use decimal-safe arithmetic for money (for example Python `Decimal`), not binary floating-point arithmetic.
+
 ## Current repository baseline (reviewed on main)
 
 - Backend: FastAPI application in `backend/main.py`.
@@ -33,6 +43,23 @@ The application is an analytical and decision-support tool. It must not imply gu
 7. CORS currently allows every origin. Restrict this when the deployment model and frontend origin are defined.
 8. API exceptions are returned as ordinary response payloads in some routes. Introduce consistent HTTP error handling and logging without leaking internal exception details.
 9. Backtest assumptions need further validation, including short-position collateral/margin treatment, candle execution assumptions, and performance metrics. Backtest output must be described as a simulation, not a forecast.
+
+## Engineering standards and definition of done
+
+Treat this as a maintainable software product with explicit domain boundaries, contracts and quality gates—not a collection of scripts.
+
+- **Architecture:** separate API/transport, domain models, application services and infrastructure/data access. Keep business rules out of route handlers and UI code.
+- **Contracts:** validate inputs and outputs; document endpoints; use consistent error response shapes and HTTP status codes.
+- **Data integrity:** use database constraints, migrations/schema versioning, stable IDs, timestamps and explicit provenance. Avoid silent data loss and duplicate imports.
+- **Money and FX:** use decimal-safe calculations; retain original currency and amount; make every conversion traceable to a specific FX rate and timestamp.
+- **Testing:** unit tests for calculations and domain rules; integration tests for database/repository and API behavior; regression tests for existing trading behavior; end-to-end smoke checks for the main user flows.
+- **Security:** keep secrets out of source control; validate uploads; restrict CORS; apply least privilege; do not expose internal exceptions or sensitive account data.
+- **Observability:** structured logs, useful health checks and actionable error messages without leaking secrets.
+- **Maintainability:** type hints, clear naming, small modules, documented setup, reproducible dependencies and focused commits.
+- **User experience:** consistent Spanish UI initially, clear empty/loading/error states, and visible source/time/currency/status for financial data.
+- **No fake completeness:** demo/sample data must be explicitly labelled. Missing or stale data must remain visibly missing or stale.
+
+A feature is not considered complete merely because it works once on the developer's machine. It must have appropriate tests, documented behavior, error handling and a reproducible way for the user to verify it.
 
 ## Architecture principles
 
@@ -97,3 +124,4 @@ The application is an analytical and decision-support tool. It must not imply gu
 - Make small, reviewable commits and run available tests before each change.
 - Do not delete or rewrite working functionality merely to fit a new architecture.
 - Report what changed, what was tested, and what remains unverified after each implementation step.
+- Do not declare the platform ready for user acceptance until the agreed end-to-end acceptance checklist passes and known limitations are documented.
