@@ -100,7 +100,7 @@ def calculate_ema(values, period):
 def get_signal():
     rows = market_service.get_candles(
         interval="5m",
-        limit=100,
+        limit=5000,
         closed_only=True,
     )
 
@@ -133,7 +133,7 @@ def get_signal_v2():
         # Obtener velas de Binance
         raw_candles = market_service.get_candles(
             interval="5m",
-            limit=100,
+            limit=5000,
             closed_only=True,
         )
 
