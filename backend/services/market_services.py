@@ -22,11 +22,8 @@ class MarketService:
 
     @staticmethod
     def _filter_closed_candles(candles, now_ms):
-        """Exclude the still-forming Binance kline using its close-time field."""
-        return [
-            candle for candle in candles
-            if len(candle) > 6 and int(candle[6]) < now_ms
-        ]
+        from services.candle_utils import filter_closed_candles
+        return filter_closed_candles(candles, now_ms)
 
     def get_candles(self, interval="5m", limit=100, closed_only=False):
         """Descarga velas históricas por lotes de hasta 1000."""
