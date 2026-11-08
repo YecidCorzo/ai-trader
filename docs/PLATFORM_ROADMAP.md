@@ -125,3 +125,32 @@ A feature is not considered complete merely because it works once on the develop
 - Do not delete or rewrite working functionality merely to fit a new architecture.
 - Report what changed, what was tested, and what remains unverified after each implementation step.
 - Do not declare the platform ready for user acceptance until the agreed end-to-end acceptance checklist passes and known limitations are documented.
+
+
+## Implementation log — 2026-11-08
+
+### Verified local smoke checks (user-run)
+- `/health` returned `{"status":"ok"}`.
+- `/api/price` returned Binance SOL/USDT market data.
+- `/api/candles` returned 5-minute OHLCV candles.
+- `/api/signal` returned a NEUTRAL signal in paper mode.
+- `/api/signal/v2` returned a LONG signal in paper mode.
+- `/dashboard` rendered the chart and dashboard.
+- `/api/backtest` returned 128 trades, -33.22% return, 0.2437 profit factor, 33.24% drawdown, and 2,144.60 USDT fees on 10,000 USDT initial virtual capital.
+- These are user-observed endpoint results, not an independently reproduced test run.
+
+### Changes on feature/financial-platform
+- Added an initial conservative backtest review-gate module and unit tests.
+- Added a GitHub Actions backend unit-test workflow using Python's standard-library unittest runner.
+- Vendored the upstream Claude Trading Skills Backtest Expert evaluator under `backend/skills/backtest_expert/`, retaining the MIT license and source attribution.
+- Added conservative stop execution for gaps through stop levels: fill at the worse candle open rather than optimistically at the stop; stop is assumed first if both stop and target are touched in one OHLC candle; target fills do not assume favorable gap improvement.
+- Added unit tests for gap-through-stop, same-candle stop/target ordering, target fills and untouched levels.
+
+### Not yet verified / next engineering gates
+- CI status has not yet reported a completed run; tests must pass before this work is considered validated.
+- The vendored Backtest Expert evaluator is not yet connected to `/api/backtest`.
+- The custom review module is an initial gate, not yet a full implementation of the upstream five-dimension scoring and decision framework.
+- The backtest engine still needs tests for short collateral assumptions, entry/exit fees, position sizing, equity-curve/intrabar drawdown, end-of-data liquidation, candle validation, and benchmark/stress testing.
+- The reported 128-trade backtest is not proof of strategy validity; the negative expectancy is a rejection signal, not a reason to tune parameters until the mechanics are audited.
+- Signal endpoint and dashboard disagreement remains open; unify indicators and signal source after regression tests.
+- PAPER MODE remains mandatory. No live order execution is implemented or authorized.
