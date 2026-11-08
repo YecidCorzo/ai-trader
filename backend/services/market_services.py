@@ -20,7 +20,15 @@ class MarketService:
 
 
 
-    def get_candles(self, interval="5m", limit=100):
+    @staticmethod
+    def _filter_closed_candles(candles, now_ms):
+        """Exclude the still-forming Binance kline using its close-time field."""
+        return [
+            candle for candle in candles
+            if len(candle) > 6 and int(candle[6]) < now_ms
+        ]
+
+    def get_candles(self, interval="5m", limit=100, closed_only=False):
         """Descarga velas históricas por lotes de hasta 1000."""
         limit = int(limit)
 
@@ -73,4 +81,10 @@ class MarketService:
             if len(candles) >= limit:
                 break
 
-        return candles[-limit:]
+        candles = candles[-limit:]
+
+        if closed_only:
+            import time
+            candles = self._filter_closed_candles(candles, int(time.time() * 1000))
+
+        return candles
