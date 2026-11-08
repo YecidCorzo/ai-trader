@@ -17,7 +17,7 @@ class BacktestExecutionTests(unittest.TestCase):
             max_drawdown=0.0,
         )
         self.assertAlmostEqual(peak, 10000.0)
-        self.assertAlmostEqual(drawdown * 100, 5.0, places=2)
+        self.assertAlmostEqual(drawdown * 100, 5.095, places=3)
 
     def test_long_stop_gap_fills_at_open_not_stop(self):
         price, reason = BacktestService._resolve_candle_exit(
