@@ -19,6 +19,43 @@ class BacktestExecutionTests(unittest.TestCase):
         self.assertAlmostEqual(peak, 10000.0)
         self.assertAlmostEqual(drawdown * 100, 5.095, places=3)
 
+    def test_short_liquidation_price_includes_maintenance_and_fees(self):
+        price = BacktestService._short_liquidation_price(
+            entry=100.0,
+            fee_rate=0.001,
+            maintenance_margin_rate=0.25,
+        )
+        self.assertGreater(price, 150.0)
+        self.assertLess(price, 161.0)
+
+    def test_short_gap_beyond_liquidation_fills_at_open(self):
+        liquidation = BacktestService._short_liquidation_price(100.0, 0.001, 0.25)
+        price, reason = BacktestService._resolve_candle_exit(
+            "SHORT",
+            {"open": liquidation + 5, "high": liquidation + 8,
+             "low": liquidation + 2, "close": liquidation + 6},
+            stop=110.0,
+            target=90.0,
+            slippage_rate=0.001,
+            liquidation_price=liquidation,
+        )
+        self.assertEqual(reason, "liquidation")
+        self.assertAlmostEqual(price, (liquidation + 5) * 1.001)
+
+    def test_short_stop_is_checked_before_intrabar_liquidation(self):
+        liquidation = BacktestService._short_liquidation_price(100.0, 0.001, 0.25)
+        price, reason = BacktestService._resolve_candle_exit(
+            "SHORT",
+            {"open": 100.0, "high": liquidation + 1,
+             "low": 99.0, "close": 110.0},
+            stop=105.0,
+            target=90.0,
+            slippage_rate=0.001,
+            liquidation_price=liquidation,
+        )
+        self.assertEqual(reason, "stop_loss")
+        self.assertAlmostEqual(price, 105.105)
+
     def test_long_stop_gap_fills_at_open_not_stop(self):
         price, reason = BacktestService._resolve_candle_exit(
             "LONG",
