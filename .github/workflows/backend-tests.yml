@@ -2,9 +2,11 @@ name: Backend tests
 
 on:
   push:
-    branches: [feature/financial-platform]
+    branches:
+      - feature/backtest-validation
   pull_request:
-    branches: [feature/financial-platform]
+    branches:
+      - main
 
 jobs:
   unit-tests:
@@ -15,4 +17,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: Run standard-library unit tests
-        env:\n          PYTHONPATH: backend\n        run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: backend
+        run: python -m unittest discover -s tests -v
