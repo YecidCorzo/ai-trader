@@ -21,6 +21,7 @@ class BacktestService:
         risk_per_trade=0.01,
         atr_multiplier=1.5,
         reward_risk=2.0,
+        short_maintenance_margin_rate=0.25,
     ):
         self.initial_balance = float(initial_balance)
         self.fee_rate = float(fee_rate)
@@ -28,6 +29,7 @@ class BacktestService:
         self.risk_per_trade = float(risk_per_trade)
         self.atr_multiplier = float(atr_multiplier)
         self.reward_risk = float(reward_risk)
+        self.short_maintenance_margin_rate = float(short_maintenance_margin_rate)
 
         numeric_settings = {
             "initial_balance": self.initial_balance,
@@ -36,6 +38,7 @@ class BacktestService:
             "risk_per_trade": self.risk_per_trade,
             "atr_multiplier": self.atr_multiplier,
             "reward_risk": self.reward_risk,
+            "short_maintenance_margin_rate": self.short_maintenance_margin_rate,
         }
         if not all(math.isfinite(value) for value in numeric_settings.values()):
             raise ValueError("Los parámetros del backtest deben ser valores finitos")
@@ -49,6 +52,8 @@ class BacktestService:
             raise ValueError("El riesgo por operación debe estar entre 0 y 1 %")
         if self.atr_multiplier <= 0 or self.reward_risk <= 0:
             raise ValueError("atr_multiplier y reward_risk deben ser positivos")
+        if not 0 < self.short_maintenance_margin_rate < 1:
+            raise ValueError("short_maintenance_margin_rate debe estar entre 0 y 1")
 
     @staticmethod
     def _ema_series(values, period):
@@ -133,7 +138,23 @@ class BacktestService:
         return peak_equity, max(max_drawdown, drawdown)
 
     @staticmethod
-    def _resolve_candle_exit(direction, candle, stop, target, slippage_rate):
+    def _short_liquidation_price(entry, fee_rate, maintenance_margin_rate):
+        """Isolated 1x short liquidation threshold, including estimated fees.
+
+        Collateral is the full entry notional. The threshold is reached when
+        collateral plus unrealized PnL, less entry/estimated exit fees, equals
+        maintenance margin. This is a simplified paper model, not an exchange
+        liquidation simulator.
+        """
+        denominator = 1 + fee_rate + maintenance_margin_rate
+        if entry <= 0 or denominator <= 0:
+            raise ValueError("Parámetros inválidos para calcular liquidación")
+        return entry * (2 - fee_rate) / denominator
+
+    @staticmethod
+    def _resolve_candle_exit(
+        direction, candle, stop, target, slippage_rate, liquidation_price=None
+    ):
         """Resolve OHLC stop/target touches conservatively.
 
         If price gaps through a stop, fill at the candle open (worse than the
@@ -150,10 +171,15 @@ class BacktestService:
             if candle["high"] >= target:
                 return target * (1 - slippage_rate), "take_profit"
         else:
+            # A gap beyond liquidation is filled at the opening price.
+            if liquidation_price is not None and open_price >= liquidation_price:
+                return open_price * (1 + slippage_rate), "liquidation"
             if open_price >= stop:
                 return open_price * (1 + slippage_rate), "stop_loss"
             if candle["high"] >= stop:
                 return stop * (1 + slippage_rate), "stop_loss"
+            if liquidation_price is not None and candle["high"] >= liquidation_price:
+                return liquidation_price * (1 + slippage_rate), "liquidation"
             if candle["low"] <= target:
                 return target * (1 + slippage_rate), "take_profit"
         return None, None
@@ -335,6 +361,16 @@ class BacktestService:
 
             entry_fee = quantity * entry * self.fee_rate
 
+            liquidation_price = (
+                self._short_liquidation_price(
+                    entry,
+                    self.fee_rate,
+                    self.short_maintenance_margin_rate,
+                )
+                if direction == "SHORT"
+                else None
+            )
+
             exit_price = None
             exit_index = None
             exit_reason = None
@@ -349,6 +385,7 @@ class BacktestService:
                     stop=stop,
                     target=target,
                     slippage_rate=self.slippage_rate,
+                    liquidation_price=liquidation_price,
                 )
 
                 mark_price = exit_price if exit_reason is not None else candle["close"]
@@ -461,6 +498,10 @@ class BacktestService:
             trade["reason"] == "end_of_data"
             for trade in trades
         )
+        liquidation_count = sum(
+            trade["reason"] == "liquidation"
+            for trade in trades
+        )
 
         return {
             "mode": "paper",
@@ -487,5 +528,8 @@ class BacktestService:
             "stop_loss_count": stop_loss_count,
             "take_profit_count": take_profit_count,
             "end_of_data_count": end_of_data_count,
+            "liquidation_count": liquidation_count,
+            "short_margin_model": "isolated_1x_full_notional_collateral",
+            "short_maintenance_margin_rate": self.short_maintenance_margin_rate,
             "trades": trades,
         }
