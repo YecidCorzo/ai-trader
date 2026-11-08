@@ -52,7 +52,7 @@ class BacktestReviewTests(unittest.TestCase):
             "VALIDATION_REQUIRED",
         )
 
-    def test_long_history_with_positive_edge_is_not_auto_deployed(self):
+    def test_long_history_positive_edge_scores_deploy_but_never_authorizes_live(self):
         candles = [
             {"time": 1_500_000_000_000},
             {"time": 1_700_000_000_000},
@@ -63,7 +63,7 @@ class BacktestReviewTests(unittest.TestCase):
             "slippage_rate": 0.0005,
         }
         review = review_backtest(result, candles)
-        self.assertEqual(review["decision"], "REFINE")
+        self.assertEqual(review["decision"], "DEPLOY")
         self.assertGreaterEqual(review["years_tested_exact"], 6.0)
         self.assertFalse(review["live_trading_authorized"])
 
@@ -79,7 +79,8 @@ class BacktestReviewTests(unittest.TestCase):
         }
         review = review_backtest(result, candles)
         self.assertGreaterEqual(review["years_tested_exact"], 6.0)
-        self.assertEqual(review["decision"], "REFINE")
+        self.assertEqual(review["decision"], "DEPLOY")
+        self.assertFalse(review["live_trading_authorized"])
 
 
 class ClaudeBacktestExpertIntegrationTests(unittest.TestCase):
