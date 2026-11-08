@@ -1,4 +1,6 @@
 
+import math
+
 from indicators.rsi import calculate_rsi_series
 
 
@@ -26,6 +28,27 @@ class BacktestService:
         self.risk_per_trade = float(risk_per_trade)
         self.atr_multiplier = float(atr_multiplier)
         self.reward_risk = float(reward_risk)
+
+        numeric_settings = {
+            "initial_balance": self.initial_balance,
+            "fee_rate": self.fee_rate,
+            "slippage_rate": self.slippage_rate,
+            "risk_per_trade": self.risk_per_trade,
+            "atr_multiplier": self.atr_multiplier,
+            "reward_risk": self.reward_risk,
+        }
+        if not all(math.isfinite(value) for value in numeric_settings.values()):
+            raise ValueError("Los parámetros del backtest deben ser valores finitos")
+        if self.initial_balance <= 0:
+            raise ValueError("El capital inicial debe ser positivo")
+        if not 0 <= self.fee_rate < 1:
+            raise ValueError("fee_rate debe estar entre 0 y 1")
+        if not 0 <= self.slippage_rate < 1:
+            raise ValueError("slippage_rate debe estar entre 0 y 1")
+        if not 0 < self.risk_per_trade <= 0.01:
+            raise ValueError("El riesgo por operación debe estar entre 0 y 1 %")
+        if self.atr_multiplier <= 0 or self.reward_risk <= 0:
+            raise ValueError("atr_multiplier y reward_risk deben ser positivos")
 
     @staticmethod
     def _ema_series(values, period):
@@ -144,8 +167,14 @@ class BacktestService:
         rsi_long_min=50,
         rsi_short_max=50,
     ):
-        if fast_period < 1 or slow_period < 1 or rsi_period < 1:
-            raise ValueError("Los periodos de los indicadores deben ser positivos")
+        if any(
+            not isinstance(period, int) or isinstance(period, bool) or period < 1
+            for period in (fast_period, slow_period, rsi_period)
+        ):
+            raise ValueError("Los periodos de los indicadores deben ser enteros positivos")
+
+        if not 0 <= rsi_long_min <= 100 or not 0 <= rsi_short_max <= 100:
+            raise ValueError("Los umbrales RSI deben estar entre 0 y 100")
 
         if fast_period >= slow_period:
             raise ValueError("fast_period debe ser menor que slow_period")
@@ -157,52 +186,63 @@ class BacktestService:
                 "Se necesitan más velas para realizar el backtest"
             )
 
-        if self.initial_balance <= 0:
-            raise ValueError("El capital inicial debe ser positivo")
-
-        if not 0 < self.risk_per_trade <= 0.01:
-            raise ValueError("El riesgo por operación debe estar entre 0 y 1 %")
-
         # Convertir las velas a un formato uniforme.
         candles = []
 
         for row in raw_candles:
-            if isinstance(row, dict):
-                candle = {
-                    "time": row.get("time", row.get("timestamp")),
-                    "open": float(row["open"]),
-                    "high": float(row["high"]),
-                    "low": float(row["low"]),
-                    "close": float(row["close"]),
-                    "volume": float(row.get("volume", 0)),
-                }
-            else:
-                candle = {
-                    "time": row[0],
-                    "open": float(row[1]),
-                    "high": float(row[2]),
-                    "low": float(row[3]),
-                    "close": float(row[4]),
-                    "volume": float(row[5]),
-                }
+            try:
+                if isinstance(row, dict):
+                    candle = {
+                        "time": row.get("time", row.get("timestamp")),
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "volume": float(row.get("volume", 0)),
+                    }
+                else:
+                    if len(row) < 6:
+                        raise ValueError("La vela debe contener al menos 6 campos")
+                    candle = {
+                        "time": row[0],
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                        "volume": float(row[5]),
+                    }
+            except (KeyError, TypeError, IndexError) as error:
+                raise ValueError("Formato de vela inválido o incompleto") from error
 
-            if (
-                candle["open"] <= 0
-                or candle["high"] <= 0
-                or candle["low"] <= 0
-                or candle["close"] <= 0
-            ):
+            prices = [candle[key] for key in ("open", "high", "low", "close", "volume")]
+            if not all(math.isfinite(value) for value in prices):
+                raise ValueError("La vela contiene precios o volumen no finitos")
+            if any(candle[key] <= 0 for key in ("open", "high", "low", "close")):
                 raise ValueError("Se encontró una vela con precios inválidos")
+            if candle["volume"] < 0:
+                raise ValueError("El volumen no puede ser negativo")
+            if (
+                candle["high"] < max(candle["open"], candle["close"], candle["low"])
+                or candle["low"] > min(candle["open"], candle["close"], candle["high"])
+            ):
+                raise ValueError("La vela contiene valores OHLC inconsistentes")
+            if candle["time"] is None:
+                raise ValueError("Cada vela debe incluir timestamp")
 
             candles.append(candle)
 
         # Verificar que los datos estén ordenados cronológicamente.
         timestamps = [candle["time"] for candle in candles]
 
-        if any(
-            timestamps[i] >= timestamps[i + 1]
-            for i in range(len(timestamps) - 1)
-        ):
+        try:
+            timestamps_are_invalid = any(
+                timestamps[i] >= timestamps[i + 1]
+                for i in range(len(timestamps) - 1)
+            )
+        except TypeError as error:
+            raise ValueError("Los timestamps deben usar un formato consistente") from error
+
+        if timestamps_are_invalid:
             raise ValueError(
                 "Las velas deben estar ordenadas cronológicamente y sin duplicados"
             )
