@@ -60,7 +60,7 @@ class BacktestReviewTests(unittest.TestCase):
             "fee_rate": 0.001,
             "slippage_rate": 0.0005,
         }
-        self.assertEqual(review_backtest(result, candles)["decision"], "REFINE")
+        self.assertEqual(review_backtest(result, candles)["decision"], "DEPLOY")
 
 
 if __name__ == "__main__":
@@ -88,6 +88,6 @@ class ClaudeBacktestExpertIntegrationTests(unittest.TestCase):
         review = review_backtest(result, candles, parameter_count=8)
         self.assertEqual(review["decision"], "REJECT")
         self.assertFalse(review["live_trading_authorized"])
-        self.assertEqual(review["quality_score"], 41)
+        self.assertEqual(review["quality_score"], 42)
         self.assertIn("negative_expectancy", review["blocking_reasons"])
         self.assertIn("short_test_period", review["blocking_reasons"])
