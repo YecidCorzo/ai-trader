@@ -3,7 +3,7 @@ import unittest
 from backend.services.backtest_service import BacktestService
 
 
-def valid_candles(count=40):
+def valid_candles(count=50):
     rows = []
     for index in range(count):
         price = 100.0 + index * 0.1
