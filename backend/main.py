@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from strategies.advanced_strategy import AdvancedStrategy
 from services.backtest_service import BacktestService
+from services.backtest_review import review_backtest
 
 app = FastAPI(title="AI Trader API")
 market_service = MarketService("SOLUSDT")
@@ -243,6 +244,7 @@ def run_backtest():
         print("BACKTEST 3: iniciando cálculo", flush=True)
 
         result = backtester.run(raw_candles)
+        result["quality_review"] = review_backtest(result, raw_candles)
 
         print("BACKTEST 4: cálculo terminado", flush=True)
 
