@@ -1,4 +1,7 @@
 
+from indicators.rsi import calculate_rsi_series
+
+
 class BacktestService:
     """
     Backtest histórico para PAPER TRADING.
@@ -45,29 +48,8 @@ class BacktestService:
 
     @staticmethod
     def _rsi_series(closes, period=14):
-        result = [None] * len(closes)
-
-        for i in range(period, len(closes)):
-            changes = [
-                closes[j] - closes[j - 1]
-                for j in range(i - period + 1, i + 1)
-            ]
-
-            gains = [max(change, 0) for change in changes]
-            losses = [max(-change, 0) for change in changes]
-
-            avg_gain = sum(gains) / period
-            avg_loss = sum(losses) / period
-
-            if avg_gain == 0 and avg_loss == 0:
-                result[i] = 50.0
-            elif avg_loss == 0:
-                result[i] = 100.0
-            else:
-                rs = avg_gain / avg_loss
-                result[i] = 100 - (100 / (1 + rs))
-
-        return result
+        """Use the shared Wilder RSI implementation used by live signals."""
+        return calculate_rsi_series(closes, period)
 
     @staticmethod
     def _atr_series(candles, period=14):
