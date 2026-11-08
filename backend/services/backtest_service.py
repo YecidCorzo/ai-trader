@@ -99,6 +99,32 @@ class BacktestService:
 
         return result
 
+    @staticmethod
+    def _resolve_candle_exit(direction, candle, stop, target, slippage_rate):
+        """Resolve OHLC stop/target touches conservatively.
+
+        If price gaps through a stop, fill at the candle open (worse than the
+        stop), not at the stop price. If both stop and target are touched in
+        one candle, assume the stop happened first. Limit targets never receive
+        favorable gap price improvement.
+        """
+        open_price = candle["open"]
+        if direction == "LONG":
+            if open_price <= stop:
+                return open_price * (1 - slippage_rate), "stop_loss"
+            if candle["low"] <= stop:
+                return stop * (1 - slippage_rate), "stop_loss"
+            if candle["high"] >= target:
+                return target * (1 - slippage_rate), "take_profit"
+        else:
+            if open_price >= stop:
+                return open_price * (1 + slippage_rate), "stop_loss"
+            if candle["high"] >= stop:
+                return stop * (1 + slippage_rate), "stop_loss"
+            if candle["low"] <= target:
+                return target * (1 + slippage_rate), "take_profit"
+        return None, None
+
     def run(
         self,
         raw_candles,
@@ -267,28 +293,13 @@ class BacktestService:
             for j in range(entry_candle_index, len(candles)):
                 candle = candles[j]
 
-                if direction == "LONG":
-                    hit_stop = candle["low"] <= stop
-                    hit_target = candle["high"] >= target
-
-                    # Criterio conservador si ambos niveles se tocan.
-                    if hit_stop:
-                        exit_price = stop * (1 - self.slippage_rate)
-                        exit_reason = "stop_loss"
-                    elif hit_target:
-                        exit_price = target * (1 - self.slippage_rate)
-                        exit_reason = "take_profit"
-
-                else:
-                    hit_stop = candle["high"] >= stop
-                    hit_target = candle["low"] <= target
-
-                    if hit_stop:
-                        exit_price = stop * (1 + self.slippage_rate)
-                        exit_reason = "stop_loss"
-                    elif hit_target:
-                        exit_price = target * (1 + self.slippage_rate)
-                        exit_reason = "take_profit"
+                exit_price, exit_reason = self._resolve_candle_exit(
+                    direction=direction,
+                    candle=candle,
+                    stop=stop,
+                    target=target,
+                    slippage_rate=self.slippage_rate,
+                )
 
                 if exit_reason is not None:
                     exit_index = j
