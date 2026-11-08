@@ -1,6 +1,7 @@
 import unittest
 
 from indicators.rsi import calculate_rsi, calculate_rsi_series
+from backend.services.backtest_service import BacktestService
 
 
 class WilderRsiTests(unittest.TestCase):
@@ -18,6 +19,13 @@ class WilderRsiTests(unittest.TestCase):
         self.assertAlmostEqual(values[4], 54.5454545, places=5)
         self.assertAlmostEqual(values[5], 75.0, places=5)
         self.assertAlmostEqual(calculate_rsi(closes, period=3), values[-1])
+
+    def test_backtest_uses_the_same_wilder_series(self):
+        closes = [10, 11, 10, 12, 11, 13, 12]
+        self.assertEqual(
+            BacktestService._rsi_series(closes, period=3),
+            calculate_rsi_series(closes, period=3),
+        )
 
     def test_flat_series_returns_neutral(self):
         self.assertEqual(calculate_rsi([5, 5, 5, 5], period=3), 50.0)
