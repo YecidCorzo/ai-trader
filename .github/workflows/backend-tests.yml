@@ -15,4 +15,4 @@ jobs:
         with:
           python-version: "3.11"
       - name: Run standard-library unit tests
-        run: python -m unittest discover -s tests -v
+        env:\n          PYTHONPATH: backend\n        run: python -m unittest discover -s tests -v
