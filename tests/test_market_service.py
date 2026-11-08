@@ -1,6 +1,6 @@
 import unittest
 
-from services.market_services import MarketService
+from services.candle_utils import filter_closed_candles
 
 
 class ClosedCandleTests(unittest.TestCase):
@@ -10,7 +10,7 @@ class ClosedCandleTests(unittest.TestCase):
             [2, "101", "103", "100", "102", "11", 1000],
             [3, "102", "104", "101", "103", "12", 1100],
         ]
-        closed = MarketService._filter_closed_candles(candles, now_ms=1001)
+        closed = filter_closed_candles(candles, now_ms=1001)
         self.assertEqual([row[0] for row in closed], [1, 2])
 
     def test_empty_input_returns_empty_list(self):
