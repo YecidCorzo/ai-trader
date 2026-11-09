@@ -62,5 +62,67 @@ class BuyAndHoldResearchTests(unittest.TestCase):
         self.assertEqual(result["benchmark"], "buy_and_hold_long")
 
 
+class WalkForwardExecutionTests(unittest.TestCase):
+    def test_runner_executes_only_chronological_test_windows(self):
+        from unittest.mock import patch
+        from services.backtest_research import run_walk_forward_backtests
+
+        candles = [
+            {"time": i, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}
+            for i in range(50)
+        ]
+        calls = []
+
+        class FakeBacktestService:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self, raw, start_index=None, end_index=None):
+                calls.append((start_index, end_index))
+                return {
+                    "trades": [{"net_pnl": 2.0}],
+                    "total_trades": 1,
+                    "net_profit": 2.0,
+                    "return_percent": 0.02,
+                    "win_rate_percent": 100.0,
+                    "profit_factor": None,
+                    "max_drawdown_percent": 0.0,
+                    "long_net_pnl": 2.0,
+                    "short_net_pnl": 0.0,
+                    "total_fees": 0.1,
+                }
+
+        with patch("services.backtest_service.BacktestService", FakeBacktestService):
+            result = run_walk_forward_backtests(
+                candles,
+                train_size=30,
+                validation_size=5,
+                test_size=5,
+                step_size=5,
+            )
+
+        self.assertEqual(calls, [(34, 39), (39, 44), (44, 49)])
+        self.assertEqual(result["fold_count"], 3)
+        self.assertEqual(result["total_trades"], 3)
+        self.assertEqual(result["net_pnl"], 6.0)
+        self.assertFalse(result["parameter_optimization_performed"])
+        self.assertEqual(result["mode"], "paper")
+
+    def test_runner_rejects_insufficient_indicator_warmup(self):
+        from services.backtest_research import run_walk_forward_backtests
+
+        candles = [
+            {"time": i, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}
+            for i in range(20)
+        ]
+        with self.assertRaises(ValueError):
+            run_walk_forward_backtests(
+                candles,
+                train_size=5,
+                validation_size=5,
+                test_size=5,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
