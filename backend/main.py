@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
@@ -196,7 +197,7 @@ def run_backtest():
     try:
         print("BACKTEST 1: solicitando velas", flush=True)
 
-        # Descargar hasta 1000 velas históricas de 5 minutos
+        # Descargar hasta 5000 velas históricas de 5 minutos
         raw_candles = market_service.get_candles(
             interval="5m",
             limit=5000,
