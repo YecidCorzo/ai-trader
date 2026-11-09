@@ -90,12 +90,14 @@ class AdvancedStrategy:
             short_reasons.append("Histograma MACD negativo")
 
         # 5. VWAP
-        if price > vwap:
-            long_score += 15
-            long_reasons.append("Precio por encima de VWAP")
-        elif price < vwap:
-            short_score += 15
-            short_reasons.append("Precio por debajo de VWAP")
+        vwap_available = vwap is not None and float(vwap) > 0
+        if vwap_available:
+            if price > vwap:
+                long_score += 15
+                long_reasons.append("Precio por encima de VWAP")
+            elif price < vwap:
+                short_score += 15
+                short_reasons.append("Precio por debajo de VWAP")
 
         # 6. Estructura reciente: máximos y mínimos
         recent = candles[-6:]
@@ -134,6 +136,9 @@ class AdvancedStrategy:
             stop_loss = None
             tp1 = None
             tp2 = None
+
+        if not vwap_available:
+            reasons.append("VWAP no disponible: volumen total cero o dato ausente")
 
         return {
             "signal": signal,
