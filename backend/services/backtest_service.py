@@ -395,7 +395,15 @@ class BacktestService:
                     liquidation_price=liquidation_price,
                 )
 
-                mark_price = exit_price if exit_reason is not None else candle["close"]
+                # OHLC close-only marking understates intrabar adverse equity.
+                # When still open, mark at the worst traded price in this candle.
+                if exit_reason is not None:
+                    mark_price = exit_price
+                elif direction == "LONG":
+                    mark_price = candle["low"]
+                else:
+                    mark_price = candle["high"]
+
                 peak_balance, max_drawdown = self._update_equity_drawdown(
                     balance=balance,
                     direction=direction,
