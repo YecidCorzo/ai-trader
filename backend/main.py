@@ -1,20 +1,15 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import requests
-from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from services.market_services import MarketService
 
+from services.market_services import MarketService
+from services.signal_validation import validate_signal_history
 from indicators.ema import calculate_ema
 from indicators.rsi import calculate_rsi
 from indicators.macd import calculate_macd
 from indicators.vwap import calculate_vwap
 from indicators.atr import calculate_atr
-
 from strategies.ema_rsi_strategy import EmaRsiStrategy
-from strategies.advanced_strategy import AdvancedStrategy
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 from strategies.advanced_strategy import AdvancedStrategy
 from services.backtest_service import BacktestService
 from services.backtest_review import review_backtest
@@ -85,17 +80,6 @@ def get_candles():
             for row in rows
         ]
     }
-def calculate_ema(values, period):
-    multiplier = 2 / (period + 1)
-    ema = values[0]
-
-    for price in values[1:]:
-        ema = (price - ema) * multiplier + ema
-
-    return ema
-
-
-
 @app.get("/api/signal")
 def get_signal():
     rows = market_service.get_candles(
@@ -106,11 +90,10 @@ def get_signal():
 
     closes = [float(row[4]) for row in rows]
 
-    if len(closes) < 15:
-        raise HTTPException(
-            status_code=503,
-            detail="Insufficient closed candle data to calculate the signal",
-        )
+    try:
+        validate_signal_history(closes, minimum=15)
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
     ema9 = calculate_ema(closes, 9)
     ema21 = calculate_ema(closes, 21)
@@ -156,6 +139,7 @@ def get_signal_v2():
         ]
 
         closes = [candle["close"] for candle in candles]
+        validate_signal_history(closes, minimum=50)
 
         # Calcular medias móviles
         # Use the complete available history for each EMA. Truncating to
@@ -189,13 +173,15 @@ def get_signal_v2():
 
         return result
 
+    except HTTPException:
+        raise
     except Exception as error:
         return {
             "error": str(error),
             "symbol": "SOL/USDT",
             "mode": "paper",
         }
-    
+
 app.mount(
     "/dashboard",
     StaticFiles(
