@@ -30,16 +30,16 @@ class BacktestReviewTests(unittest.TestCase):
         self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertFalse(review["live_trading_authorized"])
 
-    def test_insufficient_trades_are_not_evaluable(self):
+    def test_insufficient_trades_require_validation_with_specific_blocker(self):
         result = {
             "trades": self.profitable_trades(29),
             "max_drawdown_percent": 5,
             "slippage_rate": 0.0005,
         }
-        self.assertEqual(
-            review_backtest(result, self.candles)["decision"],
-            "VALIDATION_REQUIRED",
-        )
+        review = review_backtest(result, self.candles)
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
+        self.assertIn("fewer_than_100_trades", review["blocking_reasons"])
+        self.assertFalse(review["live_trading_authorized"])
 
     def test_short_history_requires_validation(self):
         result = {
