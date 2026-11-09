@@ -27,7 +27,7 @@ class BacktestReviewTests(unittest.TestCase):
             "slippage_rate": 0.0005,
         }
         review = review_backtest(result, self.candles)
-        self.assertEqual(review["decision"], "NOT_EVALUABLE")
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertFalse(review["live_trading_authorized"])
 
     def test_insufficient_trades_are_not_evaluable(self):
