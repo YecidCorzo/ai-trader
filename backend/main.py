@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -193,14 +193,22 @@ app.mount(
 )
 
 @app.get("/api/backtest")
-def run_backtest():
+def run_backtest(
+    limit: int = Query(5000, ge=100, le=100000),
+    interval: str = Query("5m"),
+):
+    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
+    if interval not in allowed_intervals:
+        raise HTTPException(status_code=400, detail="Intervalo no soportado")
+
     try:
         print("BACKTEST 1: solicitando velas", flush=True)
 
-        # Descargar hasta 5000 velas históricas de 5 minutos
+        # MarketService pagina internamente; el límite permite ampliar
+        # el histórico sin duplicar la lógica de descarga.
         raw_candles = market_service.get_candles(
-            interval="5m",
-            limit=5000,
+            interval=interval,
+            limit=limit,
             closed_only=True,
         )
         print(f"BACKTEST 2: velas recibidas: {len(raw_candles)}", flush=True)
@@ -221,7 +229,12 @@ def run_backtest():
         print("BACKTEST 4: cálculo terminado", flush=True)
 
         result["symbol"] = "SOL/USDT"
-        result["interval"] = "5m"
+        result["interval"] = interval
+        result["candles_requested"] = limit
+        result["candles_received"] = len(raw_candles)
+        if raw_candles:
+            result["history_start"] = raw_candles[0][0]
+            result["history_end"] = raw_candles[-1][0]
         result["mode"] = "paper"
 
         return result
