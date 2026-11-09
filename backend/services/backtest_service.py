@@ -100,6 +100,34 @@ class BacktestService:
         return result
 
     @staticmethod
+    def _update_equity_drawdown(
+        balance,
+        direction,
+        entry,
+        quantity,
+        mark_price,
+        entry_fee,
+        fee_rate,
+        peak_equity,
+        max_drawdown,
+    ):
+        """Update drawdown using marked-to-market equity, including open trades."""
+        if direction == "LONG":
+            unrealized_pnl = quantity * (mark_price - entry)
+        else:
+            unrealized_pnl = quantity * (entry - mark_price)
+
+        estimated_exit_fee = quantity * mark_price * fee_rate
+        equity = balance + unrealized_pnl - entry_fee - estimated_exit_fee
+        peak_equity = max(peak_equity, equity)
+        drawdown = (
+            (peak_equity - equity) / peak_equity
+            if peak_equity > 0
+            else 0.0
+        )
+        return peak_equity, max(max_drawdown, drawdown)
+
+    @staticmethod
     def _resolve_candle_exit(direction, candle, stop, target, slippage_rate):
         """Resolve OHLC stop/target touches conservatively.
 
@@ -289,7 +317,7 @@ class BacktestService:
             exit_index = None
             exit_reason = None
 
-            # Buscar el stop o el objetivo desde la vela de entrada.
+            # Marcar a mercado cada vela mientras la posición está abierta.
             for j in range(entry_candle_index, len(candles)):
                 candle = candles[j]
 
@@ -299,6 +327,19 @@ class BacktestService:
                     stop=stop,
                     target=target,
                     slippage_rate=self.slippage_rate,
+                )
+
+                mark_price = exit_price if exit_reason is not None else candle["close"]
+                peak_balance, max_drawdown = self._update_equity_drawdown(
+                    balance=balance,
+                    direction=direction,
+                    entry=entry,
+                    quantity=quantity,
+                    mark_price=mark_price,
+                    entry_fee=entry_fee,
+                    fee_rate=self.fee_rate,
+                    peak_equity=peak_balance,
+                    max_drawdown=max_drawdown,
                 )
 
                 if exit_reason is not None:
@@ -327,14 +368,12 @@ class BacktestService:
             balance += net_pnl
 
             peak_balance = max(peak_balance, balance)
-
-            drawdown = (
+            realized_drawdown = (
                 (peak_balance - balance) / peak_balance
                 if peak_balance > 0
-                else 0
+                else 0.0
             )
-
-            max_drawdown = max(max_drawdown, drawdown)
+            max_drawdown = max(max_drawdown, realized_drawdown)
 
             trades.append({
                 "direction": direction,

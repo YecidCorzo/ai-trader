@@ -16,4 +16,12 @@
 - Candidate follow-ups: Position Sizer, Technical Analyst, Trader Memory Core, Signal Postmortem, and market-regime analysis. Validate crypto/ETF compatibility and data requirements before adoption; US-equity-specific screeners are not assumed to apply to SOL/USDT.
 
 ## Current status
-The upstream evaluator is vendored for review. It is not yet wired into the /api/backtest response. The backtest engine still needs independent execution-model fixes and tests before its outputs can be considered reliable.
+The upstream evaluator is vendored and connected to the /api/backtest response through backend/services/backtest_review.py. It adds a five-dimension quality assessment; this assessment evaluates supplied metrics, not the correctness of the engine or future profitability.
+
+The engine currently:
+- Simulates entries at the next candle open and applies configurable fees and slippage.
+- Resolves stop/target ambiguity conservatively (stop first) and fills stop gaps at the candle open.
+- Marks open positions to market for maximum drawdown, including estimated exit fees.
+- Caps short notional using available balance, but does not model exchange margin, maintenance margin, or liquidation. Short-side results therefore remain a simplified paper simulation.
+
+The evaluator's DEPLOY decision is a research verdict only. The API explicitly returns live_trading_authorized=false; no live execution path is enabled. Continue validating accounting, data quality, and execution assumptions before relying on any backtest result.

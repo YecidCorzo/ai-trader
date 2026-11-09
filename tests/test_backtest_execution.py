@@ -4,6 +4,21 @@ from backend.services.backtest_service import BacktestService
 
 
 class BacktestExecutionTests(unittest.TestCase):
+    def test_open_position_drawdown_includes_unrealized_loss(self):
+        peak, drawdown = BacktestService._update_equity_drawdown(
+            balance=10000.0,
+            direction="LONG",
+            entry=100.0,
+            quantity=50.0,
+            mark_price=90.0,
+            entry_fee=5.0,
+            fee_rate=0.001,
+            peak_equity=10000.0,
+            max_drawdown=0.0,
+        )
+        self.assertAlmostEqual(peak, 10000.0)
+        self.assertAlmostEqual(drawdown * 100, 5.095, places=3)
+
     def test_long_stop_gap_fills_at_open_not_stop(self):
         price, reason = BacktestService._resolve_candle_exit(
             "LONG",
