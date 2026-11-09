@@ -71,6 +71,14 @@
       text-align: left; padding: 13px 8px;
       border-bottom: 1px solid #263047; font-size: 14px;
     }
+    .backtest-controls { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+    .backtest-controls label { display: flex; flex-direction: column; gap: 6px; color: #96a4bc; font-size: 13px; flex: 1; min-width: 140px; }
+    .backtest-controls select, .backtest-controls input {
+      background: #0b1020; color: #e8edf8; border: 1px solid #263047;
+      border-radius: 8px; padding: 11px; min-width: 0;
+    }
+    .backtest-run { background: #3156a5; margin-top: 14px; }
+    #backtest-result { white-space: pre-wrap; line-height: 1.6; margin-top: 14px; color: #d7e0ef; }
     @media (max-width: 700px) {
       .grid { grid-template-columns: 1fr; }
       header { padding: 18px; }
@@ -116,6 +124,27 @@
       <div id="signal-box" class="signal-box">Señal: Cargando...
       </div>
       <div id="status" class="status">Modo demo: no se ejecutan operaciones.</div>
+    </section>
+
+    <section class="card">
+      <h2>Investigación de estrategia <span class="muted">· Backtest PAPER</span></h2>
+      <p class="muted">SOL / USDT · Sin órdenes reales. El histórico ampliado permite evaluar más condiciones de mercado.</p>
+      <div class="backtest-controls">
+        <label>Intervalo
+          <select id="backtest-interval">
+            <option value="5m">5 minutos</option>
+            <option value="15m">15 minutos</option>
+            <option value="1h">1 hora</option>
+            <option value="4h">4 horas</option>
+            <option value="1d">1 día</option>
+          </select>
+        </label>
+        <label>Número de velas (100–100.000)
+          <input id="backtest-limit" type="number" min="100" max="100000" step="100" value="5000">
+        </label>
+      </div>
+      <button class="backtest-run" id="run-backtest" type="button">Ejecutar backtest PAPER</button>
+      <div id="backtest-result" class="status" aria-live="polite">Todavía no se ha ejecutado ningún backtest.</div>
     </section>
 
     <section class="card">
@@ -185,6 +214,59 @@ async function loadPrice() {
     priceElement.textContent = "Error de conexión";
   }
 }
+
+async function runBacktest() {
+  const button = document.getElementById("run-backtest");
+  const output = document.getElementById("backtest-result");
+  const limitInput = document.getElementById("backtest-limit");
+  const interval = document.getElementById("backtest-interval").value;
+  const limit = Number(limitInput.value);
+
+  if (!Number.isInteger(limit) || limit < 100 || limit > 100000) {
+    output.textContent = "Introduce un número entero de velas entre 100 y 100.000.";
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Calculando…";
+  output.textContent = "Descargando histórico y calculando. Puede tardar según el número de velas.";
+
+  try {
+    const query = new URLSearchParams({ limit: String(limit), interval });
+    const response = await fetch("/api/backtest?" + query.toString());
+    const data = await response.json();
+
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || data.error || "No se pudo completar el backtest.");
+    }
+
+    const review = data.quality_review || {};
+    const start = data.history_start ? new Date(Number(data.history_start)).toLocaleString("sv-SE") : "N/D";
+    const end = data.history_end ? new Date(Number(data.history_end)).toLocaleString("sv-SE") : "N/D";
+    const pf = data.profit_factor == null ? "N/D" : Number(data.profit_factor).toFixed(2);
+
+    output.textContent = [
+      "MODO: " + String(data.mode || "paper").toUpperCase(),
+      "Histórico: " + data.candles_received + " / " + data.candles_requested + " velas · " + data.interval,
+      "Periodo: " + start + " → " + end,
+      "Balance final: " + Number(data.final_balance).toFixed(2) + " USDT",
+      "Rentabilidad: " + Number(data.return_percent).toFixed(2) + "%",
+      "Operaciones: " + data.total_trades + " · Win rate: " + Number(data.win_rate_percent).toFixed(2) + "%",
+      "Profit factor: " + pf + " · Drawdown máximo: " + Number(data.max_drawdown_percent).toFixed(2) + "%",
+      "Expectativa neta/operación: " + (data.expectancy_per_trade == null ? "N/D" : Number(data.expectancy_per_trade).toFixed(4)) + " USDT",
+      "LONG neto: " + Number(data.long_net_pnl).toFixed(2) + " · SHORT neto: " + Number(data.short_net_pnl).toFixed(2),
+      "Evaluación: " + (review.decision || "No disponible"),
+      "Aviso: el resultado histórico no demuestra rentabilidad futura ni autoriza trading real."
+    ].join("\\n");
+  } catch (error) {
+    output.textContent = "Error en backtest: " + error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Ejecutar backtest PAPER";
+  }
+}
+
+document.getElementById("run-backtest").addEventListener("click", runBacktest);
 
 loadDashboard();
 loadPrice();
