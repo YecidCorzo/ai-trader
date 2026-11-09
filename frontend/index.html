@@ -145,6 +145,25 @@
       </div>
       <button class="backtest-run" id="run-backtest" type="button">Ejecutar backtest PAPER</button>
       <div id="backtest-result" class="status" aria-live="polite">Todavía no se ha ejecutado ningún backtest.</div>
+      <hr style="border-color:#263047; margin:22px 0;">
+      <h3>Validación walk-forward <span class="muted">· Fuera de muestra</span></h3>
+      <p class="muted">Divide el histórico cronológicamente. Los parámetros actuales permanecen fijos; cada ventana de prueba usa capital PAPER independiente.</p>
+      <div class="backtest-controls">
+        <label>Entrenamiento (velas)
+          <input id="wf-train" type="number" min="30" max="90000" step="100" value="3000">
+        </label>
+        <label>Validación (velas)
+          <input id="wf-validation" type="number" min="1" max="50000" step="100" value="1000">
+        </label>
+        <label>Prueba por ventana (velas)
+          <input id="wf-test" type="number" min="1" max="50000" step="100" value="1000">
+        </label>
+        <label>Avance entre ventanas
+          <input id="wf-step" type="number" min="1" max="50000" step="100" value="1000">
+        </label>
+      </div>
+      <button class="backtest-run" id="run-walk-forward" type="button">Ejecutar validación walk-forward PAPER</button>
+      <div id="walk-forward-result" class="status" aria-live="polite">Validación todavía no ejecutada.</div>
     </section>
 
     <section class="card">
@@ -272,6 +291,68 @@ async function runBacktest() {
 }
 
 document.getElementById("run-backtest").addEventListener("click", runBacktest);
+
+async function runWalkForward() {
+  const button = document.getElementById("run-walk-forward");
+  const output = document.getElementById("walk-forward-result");
+  const interval = document.getElementById("backtest-interval").value;
+  const limit = Number(document.getElementById("backtest-limit").value);
+  const train = Number(document.getElementById("wf-train").value);
+  const validation = Number(document.getElementById("wf-validation").value);
+  const test = Number(document.getElementById("wf-test").value);
+  const step = Number(document.getElementById("wf-step").value);
+  const values = [limit, train, validation, test, step];
+  if (!values.every(Number.isInteger) || values.some(value => value <= 0) ||
+      train < 30 || train + validation + test > limit) {
+    output.textContent = "Revisa los tamaños: enteros positivos, entrenamiento mínimo 30 y suma de ventanas no superior al histórico.";
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Validando ventanas…";
+  output.textContent = "Descargando histórico y ejecutando pruebas cronológicas independientes…";
+  try {
+    const query = new URLSearchParams({
+      limit: String(limit), interval, train_size: String(train),
+      validation_size: String(validation), test_size: String(test),
+      step_size: String(step)
+    });
+    const response = await fetch("/api/backtest/walk-forward?" + query.toString());
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || data.error || "Falló la validación walk-forward.");
+    }
+    const fmt = value => value == null ? "N/D" : Number(value).toFixed(2);
+    const foldLines = (data.folds || []).map(fold =>
+      "Ventana " + fold.fold + " · trades " + fold.trade_count +
+      " · PnL " + fmt(fold.net_pnl) + " USDT · retorno " +
+      fmt(fold.return_percent) + "% · DD " + fmt(fold.max_drawdown_percent) + "%"
+    );
+    output.textContent = [
+      "MODO: " + String(data.mode).toUpperCase() + " · " + data.framework,
+      "Ventanas completadas: " + data.fold_count + " · Operaciones: " + data.total_trades,
+      "PnL neto agregado: " + fmt(data.net_pnl) + " USDT",
+      "Expectativa neta/operación: " + fmt(data.average_trade_expectancy) + " USDT",
+      "Win rate: " + fmt(data.win_rate_percent) + "% · Profit factor: " + fmt(data.profit_factor),
+      "Máximo drawdown entre ventanas: " + fmt(data.max_fold_drawdown_percent) + "%",
+      "Retorno medio de estrategia: " + fmt(data.average_test_return_percent) + "%",
+      "Buy & Hold medio: " + fmt(data.average_buy_and_hold_return_percent) + "%",
+      "Exceso frente a Buy & Hold: " + fmt(data.excess_return_vs_buy_and_hold_percent) + "%",
+      "LONG neto: " + fmt(data.long_net_pnl) + " · SHORT neto: " + fmt(data.short_net_pnl),
+      "Comisiones: " + fmt(data.total_fees) + " USDT",
+      "Resultados por ventana:",
+      ...foldLines,
+      "Limitaciones: " + (data.limitations || []).join("; "),
+      "Esto es investigación PAPER con parámetros fijos, no autorización para operar en real."
+    ].join("\n");
+  } catch (error) {
+    output.textContent = "Error walk-forward: " + error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Ejecutar validación walk-forward PAPER";
+  }
+}
+document.getElementById("run-walk-forward").addEventListener("click", runWalkForward);
+
 
 loadDashboard();
 loadPrice();
