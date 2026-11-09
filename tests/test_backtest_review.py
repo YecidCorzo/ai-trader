@@ -17,7 +17,7 @@ class BacktestReviewTests(unittest.TestCase):
             for _ in range(count)
         ]
 
-    def test_negative_profit_factor_is_not_evaluable_with_small_sample(self):
+    def test_negative_sample_requires_validation_and_is_blocked(self):
         result = {
             "trades": [
                 {"net_pnl": -10, "entry": 100, "quantity": 1},
@@ -27,19 +27,19 @@ class BacktestReviewTests(unittest.TestCase):
             "slippage_rate": 0.0005,
         }
         review = review_backtest(result, self.candles)
-        self.assertEqual(review["decision"], "NOT_EVALUABLE")
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertFalse(review["live_trading_authorized"])
 
-    def test_insufficient_trades_are_not_evaluable(self):
+    def test_insufficient_trades_require_validation_with_specific_blocker(self):
         result = {
             "trades": self.profitable_trades(29),
             "max_drawdown_percent": 5,
             "slippage_rate": 0.0005,
         }
-        self.assertEqual(
-            review_backtest(result, self.candles)["decision"],
-            "NOT_EVALUABLE",
-        )
+        review = review_backtest(result, self.candles)
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
+        self.assertIn("fewer_than_100_trades", review["blocking_reasons"])
+        self.assertFalse(review["live_trading_authorized"])
 
     def test_short_history_requires_validation(self):
         result = {
@@ -52,7 +52,7 @@ class BacktestReviewTests(unittest.TestCase):
             "VALIDATION_REQUIRED",
         )
 
-    def test_long_history_positive_edge_scores_deploy_but_never_authorizes_live(self):
+    def test_long_history_still_requires_independent_windows(self):
         candles = [
             {"time": 1_500_000_000_000},
             {"time": 1_700_000_000_000},
@@ -63,7 +63,7 @@ class BacktestReviewTests(unittest.TestCase):
             "slippage_rate": 0.0005,
         }
         review = review_backtest(result, candles)
-        self.assertEqual(review["decision"], "DEPLOY")
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertGreaterEqual(review["years_tested_exact"], 6.0)
         self.assertFalse(review["live_trading_authorized"])
 
@@ -79,7 +79,7 @@ class BacktestReviewTests(unittest.TestCase):
         }
         review = review_backtest(result, candles)
         self.assertGreaterEqual(review["years_tested_exact"], 6.0)
-        self.assertEqual(review["decision"], "DEPLOY")
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertFalse(review["live_trading_authorized"])
 
 
@@ -100,11 +100,11 @@ class ClaudeBacktestExpertIntegrationTests(unittest.TestCase):
             "slippage_rate": 0.0005,
         }
         review = review_backtest(result, candles, parameter_count=8)
-        self.assertEqual(review["decision"], "REJECT")
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertFalse(review["live_trading_authorized"])
-        self.assertEqual(review["quality_score"], 42)
-        self.assertIn("negative_expectancy", review["blocking_reasons"])
-        self.assertIn("short_test_period", review["blocking_reasons"])
+        self.assertEqual(review["scorecard"]["quality_score"], 42)
+        self.assertIn("non_positive_expectancy", review["blocking_reasons"])
+        self.assertIn("less_than_5_years", review["blocking_reasons"])
 
 
 if __name__ == "__main__":
