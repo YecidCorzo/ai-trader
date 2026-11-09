@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 from fastapi.staticfiles import StaticFiles
@@ -105,6 +105,12 @@ def get_signal():
     )
 
     closes = [float(row[4]) for row in rows]
+
+    if len(closes) < 15:
+        raise HTTPException(
+            status_code=503,
+            detail="Insufficient closed candle data to calculate the signal",
+        )
 
     ema9 = calculate_ema(closes, 9)
     ema21 = calculate_ema(closes, 21)
