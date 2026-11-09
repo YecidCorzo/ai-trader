@@ -257,7 +257,7 @@ async function runBacktest() {
       "LONG neto: " + Number(data.long_net_pnl).toFixed(2) + " · SHORT neto: " + Number(data.short_net_pnl).toFixed(2),
       "Evaluación: " + (review.decision || "No disponible"),
       "Aviso: el resultado histórico no demuestra rentabilidad futura ni autoriza trading real."
-    ].join("\\n");
+    ].join("\n");
   } catch (error) {
     output.textContent = "Error en backtest: " + error.message;
   } finally {
