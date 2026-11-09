@@ -39,6 +39,11 @@ def chronological_walk_forward_splits(
     if step_size is None:
         step_size = test_size
     _positive_int(step_size, "step_size")
+    if step_size < test_size:
+        raise ValueError(
+            "step_size debe ser mayor o igual que test_size para evitar "
+            "solapamiento de ventanas fuera de muestra"
+        )
 
     values = list(candles)
     required = train_size + validation_size + test_size
