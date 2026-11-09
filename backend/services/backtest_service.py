@@ -503,6 +503,33 @@ class BacktestService:
             for trade in trades
         )
 
+        # Net expectancy and side-level diagnostics. These are descriptive
+        # statistics from the executed sample, not a forecast or win probability.
+        def side_metrics(side_trades):
+            side_winners = [trade for trade in side_trades if trade["net_pnl"] > 0]
+            side_losers = [trade for trade in side_trades if trade["net_pnl"] < 0]
+            side_total = len(side_trades)
+            return {
+                "trade_count": side_total,
+                "net_pnl": round(sum(trade["net_pnl"] for trade in side_trades), 4),
+                "expectancy_per_trade": round(
+                    sum(trade["net_pnl"] for trade in side_trades) / side_total, 4
+                ) if side_total else None,
+                "win_rate_percent": round(len(side_winners) / side_total * 100, 2)
+                if side_total else None,
+                "average_win": round(
+                    sum(trade["net_pnl"] for trade in side_winners) / len(side_winners), 4
+                ) if side_winners else None,
+                "average_loss": round(
+                    sum(trade["net_pnl"] for trade in side_losers) / len(side_losers), 4
+                ) if side_losers else None,
+            }
+
+        losing_trades = [trade for trade in trades if trade["net_pnl"] < 0]
+        long_trades = [trade for trade in trades if trade["direction"] == "LONG"]
+        short_trades = [trade for trade in trades if trade["direction"] == "SHORT"]
+        total_net_pnl = sum(trade["net_pnl"] for trade in trades)
+
         return {
             "mode": "paper",
             "initial_balance": round(self.initial_balance, 2),
@@ -512,6 +539,11 @@ class BacktestService:
                 total_pnl / self.initial_balance * 100, 2
             ),
             "total_trades": len(trades),
+            "expectancy_per_trade": round(total_net_pnl / len(trades), 4) if trades else None,
+            "average_winning_trade": round(sum(t["net_pnl"] for t in winners) / len(winners), 4) if winners else None,
+            "average_losing_trade": round(sum(t["net_pnl"] for t in losing_trades) / len(losing_trades), 4) if losing_trades else None,
+            "long_metrics": side_metrics(long_trades),
+            "short_metrics": side_metrics(short_trades),
             "winning_trades": len(winners),
             "losing_trades": len(losers),
             "win_rate_percent": round(
