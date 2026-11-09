@@ -14,6 +14,7 @@ from strategies.ema_rsi_strategy import EmaRsiStrategy
 from strategies.advanced_strategy import AdvancedStrategy
 from services.backtest_service import BacktestService
 from services.backtest_review import review_backtest
+from services.backtest_research import run_walk_forward_backtests
 
 app = FastAPI(title="AI Trader API")
 market_service = MarketService("SOLUSDT")
@@ -249,3 +250,62 @@ def run_backtest(
 
 
     
+
+
+@app.get("/api/backtest/walk-forward")
+def run_walk_forward(
+    limit: int = Query(10000, ge=100, le=100000),
+    interval: str = Query("1d"),
+    train_size: int = Query(5000, ge=30, le=90000),
+    validation_size: int = Query(1000, ge=1, le=50000),
+    test_size: int = Query(1000, ge=1, le=50000),
+    step_size: int = Query(1000, ge=1, le=50000),
+):
+    """Run fixed-parameter chronological out-of-sample tests in PAPER mode."""
+    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
+    if interval not in allowed_intervals:
+        raise HTTPException(status_code=400, detail="Intervalo no soportado")
+    required = train_size + validation_size + test_size
+    if required > limit:
+        raise HTTPException(
+            status_code=400,
+            detail="limit debe cubrir train_size + validation_size + test_size",
+        )
+    try:
+        raw_candles = market_service.get_candles(
+            interval=interval,
+            limit=limit,
+            closed_only=True,
+        )
+        if len(raw_candles) < required:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Histórico insuficiente: se necesitan {required} velas y llegaron {len(raw_candles)}",
+            )
+        result = run_walk_forward_backtests(
+            raw_candles,
+            train_size=train_size,
+            validation_size=validation_size,
+            test_size=test_size,
+            step_size=step_size,
+            backtest_kwargs={
+                "initial_balance": 10000.0,
+                "fee_rate": 0.001,
+                "slippage_rate": 0.0005,
+                "risk_per_trade": 0.01,
+            },
+        )
+        result.update({
+            "symbol": "SOL/USDT",
+            "interval": interval,
+            "candles_requested": limit,
+            "candles_received": len(raw_candles),
+            "history_start": raw_candles[0][0],
+            "history_end": raw_candles[-1][0],
+            "mode": "paper",
+        })
+        return result
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
