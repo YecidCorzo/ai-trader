@@ -43,5 +43,45 @@ class BacktestEndpointTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 400)
 
 
+    def test_walk_forward_endpoint_returns_paper_research_result(self):
+        candles = [[i, "100", "101", "99", "100", "10"] for i in range(40)]
+        research = {
+            "framework": "fixed_parameter_chronological_walk_forward",
+            "mode": "paper",
+            "fold_count": 2,
+            "total_trades": 10,
+        }
+        with patch.object(main.market_service, "get_candles", return_value=candles) as get_candles, \
+             patch.object(main, "run_walk_forward_backtests", return_value=research) as run_research:
+            result = main.run_walk_forward(
+                limit=40,
+                interval="1d",
+                train_size=20,
+                validation_size=10,
+                test_size=5,
+                step_size=5,
+            )
+
+        get_candles.assert_called_once_with(
+            interval="1d", limit=40, closed_only=True
+        )
+        run_research.assert_called_once()
+        self.assertEqual(result["fold_count"], 2)
+        self.assertEqual(result["mode"], "paper")
+        self.assertEqual(result["symbol"], "SOL/USDT")
+
+    def test_walk_forward_endpoint_rejects_insufficient_requested_history(self):
+        with self.assertRaises(HTTPException) as context:
+            main.run_walk_forward(
+                limit=100,
+                interval="1d",
+                train_size=80,
+                validation_size=15,
+                test_size=10,
+                step_size=5,
+            )
+        self.assertEqual(context.exception.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
