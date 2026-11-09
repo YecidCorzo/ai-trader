@@ -176,10 +176,17 @@ class BacktestService:
                 return open_price * (1 + slippage_rate), "liquidation"
             if open_price >= stop:
                 return open_price * (1 + slippage_rate), "stop_loss"
+
+            # OHLC data cannot reveal whether the stop or liquidation level
+            # was reached first within the candle. If both are touched,
+            # assume liquidation to avoid overstating short-side performance.
+            if (
+                liquidation_price is not None
+                and candle["high"] >= liquidation_price
+            ):
+                return liquidation_price * (1 + slippage_rate), "liquidation"
             if candle["high"] >= stop:
                 return stop * (1 + slippage_rate), "stop_loss"
-            if liquidation_price is not None and candle["high"] >= liquidation_price:
-                return liquidation_price * (1 + slippage_rate), "liquidation"
             if candle["low"] <= target:
                 return target * (1 + slippage_rate), "take_profit"
         return None, None
