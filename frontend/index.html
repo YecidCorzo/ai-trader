@@ -257,9 +257,9 @@ async function runBacktest() {
       "LONG neto: " + Number(data.long_net_pnl).toFixed(2) + " · SHORT neto: " + Number(data.short_net_pnl).toFixed(2),
       "Evaluación: " + (review.decision || "No disponible") +
         " · Calidad: " + (review.scorecard?.quality_score == null ? "N/D" : review.scorecard.quality_score + "/100"),
-      "Veredicto orientativo: " + (review.verdict || "N/D"),
+      "Veredicto orientativo: " + (review.scorecard?.verdict || "N/D"),
       "Motivos de bloqueo: " + ((review.blocking_reasons || []).join(", ") || "Ninguno reportado"),
-      "Alertas: " + ((review.red_flags || []).map(flag => flag.id + " (" + flag.severity + ")").join(", ") || "Ninguna reportada"),
+      "Alertas: " + ((review.scorecard?.red_flags || []).map(flag => flag.id + " (" + flag.severity + ")").join(", ") || "Ninguna reportada"),
       "Comisiones totales: " + (data.total_fees == null ? "N/D" : Number(data.total_fees).toFixed(2)) + " USDT",
       "Aviso: la puntuación es un filtro de calidad, no una autorización para operar ni prueba de rentabilidad futura."
     ].join("\n");
