@@ -1,6 +1,7 @@
 import unittest
 
 from indicators.rsi import calculate_rsi, calculate_rsi_series
+from backend.services.backtest_service import BacktestService
 
 
 class WilderRsiTests(unittest.TestCase):
@@ -12,8 +13,19 @@ class WilderRsiTests(unittest.TestCase):
     def test_wilder_smoothing_differs_from_recomputing_simple_window(self):
         closes = [10, 11, 10, 12, 11, 13, 12]
         values = calculate_rsi_series(closes, period=3)
-        self.assertIsNotNone(values[-1])
+        # After the initial 3-period average, Wilder recursively smooths
+        # the next loss instead of recalculating a simple rolling window.
+        self.assertAlmostEqual(values[3], 75.0, places=5)
+        self.assertAlmostEqual(values[4], 54.5454545, places=5)
+        self.assertAlmostEqual(values[5], 75.0, places=5)
         self.assertAlmostEqual(calculate_rsi(closes, period=3), values[-1])
+
+    def test_backtest_uses_the_same_wilder_series(self):
+        closes = [10, 11, 10, 12, 11, 13, 12]
+        self.assertEqual(
+            BacktestService._rsi_series(closes, period=3),
+            calculate_rsi_series(closes, period=3),
+        )
 
     def test_flat_series_returns_neutral(self):
         self.assertEqual(calculate_rsi([5, 5, 5, 5], period=3), 50.0)
