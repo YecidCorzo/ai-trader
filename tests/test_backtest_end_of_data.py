@@ -45,6 +45,9 @@ class BacktestEndOfDataTests(unittest.TestCase):
         self.assertEqual(trade["exit_time"], 39)
         self.assertAlmostEqual(trade["exit"], 100.5 * (1 - 0.0005), places=6)
         self.assertGreater(trade["fees"], 0)
+        self.assertEqual(result["long_metrics"]["trade_count"], 1)
+        self.assertEqual(result["short_metrics"]["trade_count"], 0)
+        self.assertAlmostEqual(result["expectancy_per_trade"], trade["net_pnl"], places=4)
         self.assertAlmostEqual(result["final_balance"],
                                result["initial_balance"] + trade["net_pnl"], places=2)
 
@@ -74,6 +77,9 @@ class BacktestEndOfDataTests(unittest.TestCase):
         self.assertEqual(trade["exit_time"], 39)
         self.assertAlmostEqual(trade["exit"], 100.5 * (1 + 0.0005), places=6)
         self.assertGreater(trade["fees"], 0)
+        self.assertEqual(result["short_metrics"]["trade_count"], 1)
+        self.assertEqual(result["long_metrics"]["trade_count"], 0)
+        self.assertAlmostEqual(result["expectancy_per_trade"], trade["net_pnl"], places=4)
         self.assertAlmostEqual(result["final_balance"],
                                result["initial_balance"] + trade["net_pnl"], places=2)
 
