@@ -100,7 +100,8 @@ def calculate_ema(values, period):
 def get_signal():
     rows = market_service.get_candles(
         interval="5m",
-        limit=100
+        limit=5000,
+        closed_only=True,
     )
 
     closes = [float(row[4]) for row in rows]
@@ -132,7 +133,8 @@ def get_signal_v2():
         # Obtener velas de Binance
         raw_candles = market_service.get_candles(
             interval="5m",
-            limit=100
+            limit=5000,
+            closed_only=True,
         )
 
         # Convertir las velas al formato que usan los indicadores
@@ -150,9 +152,11 @@ def get_signal_v2():
         closes = [candle["close"] for candle in candles]
 
         # Calcular medias móviles
-        ema_fast = calculate_ema(closes[-9:], 9)
-        ema_slow = calculate_ema(closes[-21:], 21)
-        ema_trend = calculate_ema(closes[-50:], 50)
+        # Use the complete available history for each EMA. Truncating to
+        # exactly one period changes the EMA seed and diverges from backtests.
+        ema_fast = calculate_ema(closes, 9)
+        ema_slow = calculate_ema(closes, 21)
+        ema_trend = calculate_ema(closes, 50)
 
         # Calcular indicadores
         rsi = calculate_rsi(closes, period=14)
@@ -204,6 +208,7 @@ def run_backtest():
         raw_candles = market_service.get_candles(
             interval="5m",
             limit=5000,
+            closed_only=True,
         )
         print(f"BACKTEST 2: velas recibidas: {len(raw_candles)}", flush=True)
 
