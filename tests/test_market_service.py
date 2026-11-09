@@ -29,5 +29,54 @@ class ClosedCandleTests(unittest.TestCase):
         self.assertEqual(filter_closed_candles(candles, now_ms=1000), [])
 
 
+class MarketServicePaginationTests(unittest.TestCase):
+    @staticmethod
+    def make_rows(start, count):
+        return [
+            [timestamp, "100", "102", "99", "101", "10", timestamp + 299999]
+            for timestamp in range(start, start + count)
+        ]
+
+    def test_get_candles_fetches_multiple_pages_and_returns_chronological_limit(self):
+        from unittest.mock import Mock, patch
+        from services.market_services import MarketService
+
+        recent = self.make_rows(1000, 1000)
+        older = self.make_rows(500, 500)
+        first_response = Mock()
+        first_response.json.return_value = recent
+        first_response.raise_for_status.return_value = None
+        second_response = Mock()
+        second_response.json.return_value = older
+        second_response.raise_for_status.return_value = None
+
+        with patch(
+            "services.market_services.requests.get",
+            side_effect=[first_response, second_response],
+        ) as get:
+            result = MarketService("SOLUSDT").get_candles(
+                interval="5m", limit=1500
+            )
+
+        self.assertEqual(len(result), 1500)
+        self.assertEqual(int(result[0][0]), 500)
+        self.assertEqual(int(result[-1][0]), 1999)
+        self.assertEqual(
+            [int(row[0]) for row in result],
+            sorted(int(row[0]) for row in result),
+        )
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(get.call_args_list[0].kwargs["params"]["limit"], 1000)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["limit"], 500)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["endTime"], 999)
+
+    def test_get_candles_rejects_non_positive_limit(self):
+        from services.market_services import MarketService
+
+        with self.assertRaises(ValueError):
+            MarketService().get_candles(limit=0)
+
+
+
 if __name__ == "__main__":
     unittest.main()
