@@ -199,6 +199,8 @@ class BacktestService:
         rsi_period=14,
         rsi_long_min=50,
         rsi_short_max=50,
+        start_index=None,
+        end_index=None,
     ):
         if any(
             not isinstance(period, int) or isinstance(period, bool) or period < 1
@@ -280,6 +282,18 @@ class BacktestService:
                 "Las velas deben estar ordenadas cronológicamente y sin duplicados"
             )
 
+        first_signal_index = max(slow_period, rsi_period + 1, 15)
+        start_index = first_signal_index if start_index is None else start_index
+        end_index = len(candles) - 1 if end_index is None else end_index
+        if (
+            not isinstance(start_index, int) or isinstance(start_index, bool)
+            or not isinstance(end_index, int) or isinstance(end_index, bool)
+            or start_index < first_signal_index
+            or end_index >= len(candles)
+            or end_index <= start_index
+        ):
+            raise ValueError("Ventana de backtest inválida")
+
         closes = [candle["close"] for candle in candles]
 
         ema_fast = self._ema_series(closes, fast_period)
@@ -292,10 +306,10 @@ class BacktestService:
         max_drawdown = 0.0
         trades = []
 
-        i = max(slow_period, rsi_period + 1, 15)
+        i = start_index
 
         # Bucle principal: cada operación se procesa una sola vez.
-        while i < len(candles) - 1:
+        while i < min(len(candles) - 1, end_index):
             rsi = rsi_values[i]
             atr = atr_values[i]
 
@@ -383,7 +397,7 @@ class BacktestService:
             exit_reason = None
 
             # Marcar a mercado cada vela mientras la posición está abierta.
-            for j in range(entry_candle_index, len(candles)):
+            for j in range(entry_candle_index, end_index + 1):
                 candle = candles[j]
 
                 exit_price, exit_reason = self._resolve_candle_exit(
@@ -422,7 +436,7 @@ class BacktestService:
 
             # Si no se alcanza stop ni objetivo, cerrar al final del histórico.
             if exit_price is None:
-                exit_index = len(candles) - 1
+                exit_index = end_index
                 last_close = candles[exit_index]["close"]
 
                 if direction == "LONG":
