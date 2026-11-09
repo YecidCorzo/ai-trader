@@ -42,12 +42,25 @@ class BacktestExecutionTests(unittest.TestCase):
         self.assertEqual(reason, "liquidation")
         self.assertAlmostEqual(price, (liquidation + 5) * 1.001)
 
-    def test_short_stop_is_checked_before_intrabar_liquidation(self):
+    def test_short_intrabar_liquidation_takes_priority_over_stop(self):
         liquidation = BacktestService._short_liquidation_price(100.0, 0.001, 0.25)
         price, reason = BacktestService._resolve_candle_exit(
             "SHORT",
             {"open": 100.0, "high": liquidation + 1,
              "low": 99.0, "close": 110.0},
+            stop=105.0,
+            target=90.0,
+            slippage_rate=0.001,
+            liquidation_price=liquidation,
+        )
+        self.assertEqual(reason, "liquidation")
+        self.assertAlmostEqual(price, liquidation * 1.001)
+
+    def test_short_intrabar_stop_is_used_when_liquidation_is_not_touched(self):
+        liquidation = BacktestService._short_liquidation_price(100.0, 0.001, 0.25)
+        price, reason = BacktestService._resolve_candle_exit(
+            "SHORT",
+            {"open": 100.0, "high": 106.0, "low": 99.0, "close": 104.0},
             stop=105.0,
             target=90.0,
             slippage_rate=0.001,
