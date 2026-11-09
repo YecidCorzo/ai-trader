@@ -255,8 +255,13 @@ async function runBacktest() {
       "Profit factor: " + pf + " · Drawdown máximo: " + Number(data.max_drawdown_percent).toFixed(2) + "%",
       "Expectativa neta/operación: " + (data.expectancy_per_trade == null ? "N/D" : Number(data.expectancy_per_trade).toFixed(4)) + " USDT",
       "LONG neto: " + Number(data.long_net_pnl).toFixed(2) + " · SHORT neto: " + Number(data.short_net_pnl).toFixed(2),
-      "Evaluación: " + (review.decision || "No disponible"),
-      "Aviso: el resultado histórico no demuestra rentabilidad futura ni autoriza trading real."
+      "Evaluación: " + (review.decision || "No disponible") +
+        " · Calidad: " + (review.quality_score == null ? "N/D" : review.quality_score + "/100"),
+      "Veredicto orientativo: " + (review.verdict || "N/D"),
+      "Motivos de bloqueo: " + ((review.blocking_reasons || []).join(", ") || "Ninguno reportado"),
+      "Alertas: " + ((review.red_flags || []).map(flag => flag.id + " (" + flag.severity + ")").join(", ") || "Ninguna reportada"),
+      "Comisiones totales: " + (data.total_fees == null ? "N/D" : Number(data.total_fees).toFixed(2)) + " USDT",
+      "Aviso: la puntuación es un filtro de calidad, no una autorización para operar ni prueba de rentabilidad futura."
     ].join("\n");
   } catch (error) {
     output.textContent = "Error en backtest: " + error.message;
