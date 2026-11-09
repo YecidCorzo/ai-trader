@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - "feature/**"
+      - "fix/**"
   pull_request:
     branches:
       - main
+      - "feature/**"
+      - "fix/**"
 
 jobs:
   unit-tests:
