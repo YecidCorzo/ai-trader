@@ -256,7 +256,7 @@ async function runBacktest() {
       "Expectativa neta/operación: " + (data.expectancy_per_trade == null ? "N/D" : Number(data.expectancy_per_trade).toFixed(4)) + " USDT",
       "LONG neto: " + Number(data.long_net_pnl).toFixed(2) + " · SHORT neto: " + Number(data.short_net_pnl).toFixed(2),
       "Evaluación: " + (review.decision || "No disponible") +
-        " · Calidad: " + (review.quality_score == null ? "N/D" : review.quality_score + "/100"),
+        " · Calidad: " + (review.scorecard?.quality_score == null ? "N/D" : review.scorecard.quality_score + "/100"),
       "Veredicto orientativo: " + (review.verdict || "N/D"),
       "Motivos de bloqueo: " + ((review.blocking_reasons || []).join(", ") || "Ninguno reportado"),
       "Alertas: " + ((review.red_flags || []).map(flag => flag.id + " (" + flag.severity + ")").join(", ") || "Ninguna reportada"),
