@@ -178,3 +178,15 @@ A feature is not considered complete merely because it works once on the develop
 - PRs #14–#16 were merged into their respective stacked feature branches. They are not thereby considered merged into `main`; the branch chain must be reviewed and integrated deliberately.
 - The statistical research work is based on the latest VWAP/signal feature branch and is submitted separately for review.
 - PAPER MODE remains mandatory.
+
+
+### Upstream Claude Trading Skills catalog review — 2026-11-09
+Reviewed the upstream skill catalog at commit `163ceb48968c71a701dd9cc77d827258d9b5b348` (MIT license). Candidate selection is based on actual skill documentation, not assumed names:
+
+1. **crypto-regime-analyzer** — strong fit for crypto market posture; it uses CoinGecko and Binance public funding data. Integrate only after provider adapters, freshness checks, missing-component handling and rate-limit behavior are independently tested. Its risk-on/off bands are heuristic, not validated allocation instructions.
+2. **position-sizer** — useful risk-sizing methodology, but the upstream skill is explicitly long-stock oriented. Reuse only the validated fixed-fractional/ATR concepts after adapting contracts for crypto, fees, slippage, minimum notional and current paper portfolio exposure. Do not import stock-specific share assumptions or Kelly outputs as an order recommendation.
+3. **drawdown-circuit-breaker** — valuable as a paper-risk guardrail, but it depends on Trader Memory Core state and uses US Eastern calendar boundaries. Adapt the state contract and timezone policy before integration; it is a recommendation layer, not broker enforcement.
+4. **trader-memory-core** — potentially useful for thesis lifecycle and postmortems, but upstream dependencies include YAML/JSON Schema and its accounting explicitly rejects short-equity accounting. Do not import it wholesale into the existing crypto engine; first define a platform-neutral thesis/trade journal model and preserve explicit LONG/SHORT semantics.
+5. **portfolio-manager** — not selected for initial integration because its full mode is Alpaca-centric and requires brokerage connectivity. Its offline CSV review can be evaluated later, but no broker credentials or live account access are part of the current scope.
+
+The upstream skill names above are verified candidates, not claims that those skills have already been installed. Backtest Expert remains the only upstream skill vendored so far. Every additional skill will be adapted behind a local interface, with source/license attribution and tests; no third-party script will be allowed to execute trades or override PAPER MODE.
