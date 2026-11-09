@@ -19,7 +19,7 @@ class VwapTests(unittest.TestCase):
             {"high": 101, "low": 99, "close": 100, "volume": 2},
             {"high": 102, "low": 100, "close": 101, "volume": 1},
         ]
-        self.assertAlmostEqual(calculate_vwap(candles), 100.5)
+        self.assertAlmostEqual(calculate_vwap(candles), 100.3333333333)
 
 
 if __name__ == "__main__":
