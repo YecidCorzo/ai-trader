@@ -1,6 +1,6 @@
 def calculate_vwap(candles):
     if not candles:
-        return 0.0
+        return None
 
     total_price_volume = 0.0
     total_volume = 0.0
@@ -16,8 +16,8 @@ def calculate_vwap(candles):
         total_price_volume += typical_price * volume
         total_volume += volume
 
-    if total_volume == 0:
-        return 0.0
+    if total_volume <= 0:
+        return None
 
     return total_price_volume / total_volume
 
