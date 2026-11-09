@@ -108,6 +108,16 @@ class WalkForwardExecutionTests(unittest.TestCase):
         self.assertFalse(result["parameter_optimization_performed"])
         self.assertEqual(result["mode"], "paper")
 
+    def test_splits_reject_overlapping_test_windows(self):
+        with self.assertRaisesRegex(ValueError, "solapamiento"):
+            chronological_walk_forward_splits(
+                list(range(40)),
+                train_size=20,
+                validation_size=5,
+                test_size=10,
+                step_size=5,
+            )
+
     def test_runner_rejects_insufficient_indicator_warmup(self):
         from services.backtest_research import run_walk_forward_backtests
 
