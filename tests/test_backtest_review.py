@@ -63,7 +63,7 @@ class BacktestReviewTests(unittest.TestCase):
             "slippage_rate": 0.0005,
         }
         review = review_backtest(result, candles)
-        self.assertEqual(review["decision"], "DEPLOY")
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertGreaterEqual(review["years_tested_exact"], 6.0)
         self.assertFalse(review["live_trading_authorized"])
 
@@ -100,11 +100,11 @@ class ClaudeBacktestExpertIntegrationTests(unittest.TestCase):
             "slippage_rate": 0.0005,
         }
         review = review_backtest(result, candles, parameter_count=8)
-        self.assertEqual(review["decision"], "REJECT")
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertFalse(review["live_trading_authorized"])
-        self.assertEqual(review["quality_score"], 42)
-        self.assertIn("negative_expectancy", review["blocking_reasons"])
-        self.assertIn("short_test_period", review["blocking_reasons"])
+        self.assertEqual(review["scorecard"]["quality_score"], 42)
+        self.assertIn("non_positive_expectancy", review["blocking_reasons"])
+        self.assertIn("less_than_5_years", review["blocking_reasons"])
 
 
 if __name__ == "__main__":
