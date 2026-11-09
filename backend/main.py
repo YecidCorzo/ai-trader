@@ -265,6 +265,11 @@ def run_walk_forward(
     allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
     if interval not in allowed_intervals:
         raise HTTPException(status_code=400, detail="Intervalo no soportado")
+    if step_size < test_size:
+        raise HTTPException(
+            status_code=400,
+            detail="step_size debe ser mayor o igual que test_size para evitar ventanas de prueba solapadas",
+        )
     required = train_size + validation_size + test_size
     if required > limit:
         raise HTTPException(
