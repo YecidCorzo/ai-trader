@@ -52,6 +52,12 @@ class BacktestInputValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "timestamp"):
             BacktestService().run(candles)
 
+    def test_rejects_inconsistent_timestamp_types(self):
+        candles = valid_candles()
+        candles[10]["time"] = "not-a-timestamp"
+        with self.assertRaisesRegex(ValueError, "timestamps"):
+            BacktestService().run(candles)
+
     def test_rejects_non_integer_indicator_periods(self):
         with self.assertRaises(ValueError):
             BacktestService().run(valid_candles(), fast_period=9.5)

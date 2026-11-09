@@ -27,6 +27,16 @@ class WilderRsiTests(unittest.TestCase):
             calculate_rsi_series(closes, period=3),
         )
 
+    def test_period_14_matches_independent_wilder_reference_value(self):
+        # Published Wilder-style 14-period example; first RSI is based on
+        # the arithmetic mean of the first 14 price changes.
+        closes = [
+            44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42,
+            45.84, 46.08, 45.89, 46.03, 45.61, 46.28, 46.28,
+        ]
+        values = calculate_rsi_series(closes, period=14)
+        self.assertAlmostEqual(values[14], 70.4641350, places=6)
+
     def test_flat_series_returns_neutral(self):
         self.assertEqual(calculate_rsi([5, 5, 5, 5], period=3), 50.0)
 
