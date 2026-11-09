@@ -17,7 +17,7 @@ class BacktestReviewTests(unittest.TestCase):
             for _ in range(count)
         ]
 
-    def test_negative_profit_factor_is_not_evaluable_with_small_sample(self):
+    def test_negative_sample_requires_validation_and_is_blocked(self):
         result = {
             "trades": [
                 {"net_pnl": -10, "entry": 100, "quantity": 1},
@@ -38,7 +38,7 @@ class BacktestReviewTests(unittest.TestCase):
         }
         self.assertEqual(
             review_backtest(result, self.candles)["decision"],
-            "NOT_EVALUABLE",
+            "VALIDATION_REQUIRED",
         )
 
     def test_short_history_requires_validation(self):
@@ -52,7 +52,7 @@ class BacktestReviewTests(unittest.TestCase):
             "VALIDATION_REQUIRED",
         )
 
-    def test_long_history_positive_edge_scores_deploy_but_never_authorizes_live(self):
+    def test_long_history_still_requires_independent_windows(self):
         candles = [
             {"time": 1_500_000_000_000},
             {"time": 1_700_000_000_000},
@@ -79,7 +79,7 @@ class BacktestReviewTests(unittest.TestCase):
         }
         review = review_backtest(result, candles)
         self.assertGreaterEqual(review["years_tested_exact"], 6.0)
-        self.assertEqual(review["decision"], "DEPLOY")
+        self.assertEqual(review["decision"], "VALIDATION_REQUIRED")
         self.assertFalse(review["live_trading_authorized"])
 
 
