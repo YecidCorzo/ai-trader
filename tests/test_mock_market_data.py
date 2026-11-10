@@ -1,6 +1,8 @@
 import unittest
 
 from services.backtest_service import BacktestService
+from indicators.ema import calculate_ema
+from indicators.rsi import calculate_rsi_series
 from tests.helpers.mock_market_data import (
     SCENARIOS,
     generate_ohlcv,
@@ -36,6 +38,12 @@ class MockMarketDataHarnessTests(unittest.TestCase):
         self.assertGreater(rising[-1][4], rising[0][1])
         self.assertLess(falling[-1][4], falling[0][1])
 
+    def test_sideways_scenario_mean_reverts_near_starting_price(self):
+        candles = generate_ohlcv(count=500, scenario="sideways", seed=19)
+        closes = [row[4] for row in candles]
+        self.assertLess(max(closes), 115.0)
+        self.assertGreater(min(closes), 85.0)
+
     def test_zero_volume_scenario_is_supported(self):
         candles = generate_ohlcv(count=60, scenario="zero_volume")
         self.assertTrue(all(row[5] == 0 for row in candles))
@@ -50,6 +58,14 @@ class MockMarketDataHarnessTests(unittest.TestCase):
             generate_ohlcv(scenario="unknown")
         with self.assertRaises(ValueError):
             generate_ohlcv(count=0)
+
+    def test_ema_and_rsi_indicators_have_deterministic_edge_values(self):
+        self.assertAlmostEqual(calculate_ema([10.0, 12.0, 14.0], 2), 13.1111111111)
+        flat_rsi = calculate_rsi_series([100.0] * 16, period=14)
+        rising_rsi = calculate_rsi_series([float(i) for i in range(16)], period=14)
+        self.assertEqual(flat_rsi[-1], 50.0)
+        self.assertEqual(rising_rsi[-1], 100.0)
+        self.assertIsNone(rising_rsi[13])
 
     def test_backtester_accepts_synthetic_market_history_in_paper_mode(self):
         candles = generate_ohlcv(count=240, scenario="uptrend", seed=21)
