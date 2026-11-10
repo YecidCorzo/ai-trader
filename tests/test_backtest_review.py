@@ -10,24 +10,31 @@ class BacktestReviewTests(unittest.TestCase):
             {"time": 1_700_000_300_000},
         ]
 
+    @staticmethod
+    def make_trades(count, net_pnl=0.01):
+        return [
+            {"net_pnl": net_pnl, "entry": 100.0, "quantity": 1.0}
+            for _ in range(count)
+        ]
+
     def test_negative_profit_factor_is_rejected(self):
+        trades = self.make_trades(10, 0.40) + self.make_trades(20, -0.55)
         result = {
-            "trades": [{"net_pnl": -10}, {"net_pnl": 5}],
-            "profit_factor": 0.5,
+            "trades": trades,
+            "win_rate_percent": 100 / 3,
             "max_drawdown_percent": 20,
-            "fee_rate": 0.001,
             "slippage_rate": 0.0005,
         }
         review = review_backtest(result, self.candles)
-        self.assertEqual(review["decision"], "NOT_EVALUABLE")
+        self.assertEqual(review["decision"], "REJECT")
+        self.assertIn("negative_expectancy", review["blocking_reasons"])
         self.assertFalse(review["live_trading_authorized"])
 
     def test_insufficient_trades_are_not_evaluable(self):
         result = {
-            "trades": [{"net_pnl": 10}] * 29,
-            "profit_factor": 2.0,
+            "trades": self.make_trades(29),
+            "win_rate_percent": 100.0,
             "max_drawdown_percent": 5,
-            "fee_rate": 0.001,
             "slippage_rate": 0.0005,
         }
         self.assertEqual(
@@ -37,10 +44,9 @@ class BacktestReviewTests(unittest.TestCase):
 
     def test_short_history_requires_validation_when_not_rejected(self):
         result = {
-            "trades": [{"net_pnl": 10}] * 30,
-            "profit_factor": 1.2,
+            "trades": self.make_trades(30),
+            "win_rate_percent": 100.0,
             "max_drawdown_percent": 10,
-            "fee_rate": 0.001,
             "slippage_rate": 0.0005,
         }
         self.assertEqual(
@@ -54,13 +60,14 @@ class BacktestReviewTests(unittest.TestCase):
             {"time": 1_700_000_000_000},
         ]
         result = {
-            "trades": [{"net_pnl": 10}] * 30,
-            "profit_factor": 1.2,
+            "trades": self.make_trades(30),
+            "win_rate_percent": 100.0,
             "max_drawdown_percent": 10,
-            "fee_rate": 0.001,
             "slippage_rate": 0.0005,
         }
-        self.assertEqual(review_backtest(result, candles)["decision"], "REFINE")
+        review = review_backtest(result, candles)
+        self.assertEqual(review["decision"], "REFINE")
+        self.assertFalse(review["live_trading_authorized"])
 
 
 if __name__ == "__main__":
@@ -88,6 +95,6 @@ class ClaudeBacktestExpertIntegrationTests(unittest.TestCase):
         review = review_backtest(result, candles, parameter_count=8)
         self.assertEqual(review["decision"], "REJECT")
         self.assertFalse(review["live_trading_authorized"])
-        self.assertEqual(review["quality_score"], 41)
+        self.assertEqual(review["quality_score"], 42)
         self.assertIn("negative_expectancy", review["blocking_reasons"])
         self.assertIn("short_test_period", review["blocking_reasons"])
