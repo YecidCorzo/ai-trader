@@ -3,6 +3,7 @@ import unittest
 from services.backtest_service import BacktestService
 from indicators.ema import calculate_ema
 from indicators.rsi import calculate_rsi_series
+from strategies.ema_rsi_strategy import EmaRsiStrategy
 from tests.helpers.mock_market_data import (
     SCENARIOS,
     generate_ohlcv,
@@ -83,6 +84,37 @@ class MockMarketDataHarnessTests(unittest.TestCase):
                 candles[10] = invalid
                 with self.assertRaises(ValueError):
                     BacktestService().run(candles)
+
+
+class EmaRsiSignalHarnessTests(unittest.TestCase):
+    def setUp(self):
+        self.strategy = EmaRsiStrategy()
+
+    def test_bullish_alignment_generates_long(self):
+        self.assertEqual(
+            self.strategy.generate_signal(ema9=105.0, ema21=100.0, rsi=55.0),
+            "LONG",
+        )
+
+    def test_bearish_alignment_generates_short(self):
+        self.assertEqual(
+            self.strategy.generate_signal(ema9=95.0, ema21=100.0, rsi=45.0),
+            "SHORT",
+        )
+
+    def test_mixed_or_boundary_alignment_generates_neutral(self):
+        self.assertEqual(
+            self.strategy.generate_signal(ema9=105.0, ema21=100.0, rsi=49.9),
+            "NEUTRAL",
+        )
+        self.assertEqual(
+            self.strategy.generate_signal(ema9=95.0, ema21=100.0, rsi=50.1),
+            "NEUTRAL",
+        )
+        self.assertEqual(
+            self.strategy.generate_signal(ema9=100.0, ema21=100.0, rsi=50.0),
+            "NEUTRAL",
+        )
 
 
 if __name__ == "__main__":
