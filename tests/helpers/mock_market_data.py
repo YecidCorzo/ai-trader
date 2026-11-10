@@ -38,6 +38,10 @@ def generate_ohlcv(
             drift, noise = -0.0018, 0.0015
         elif scenario == "volatile":
             drift, noise = 0.0, 0.025
+        elif scenario == "sideways":
+            # Mean reversion keeps the path in a range instead of a random walk.
+            drift = max(-0.002, min(0.002, (start_price - price) / start_price * 0.12))
+            noise = 0.0015
         else:
             drift, noise = 0.0, 0.0015
 
