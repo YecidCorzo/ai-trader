@@ -17,7 +17,7 @@ class BacktestReviewTests(unittest.TestCase):
             for _ in range(count)
         ]
 
-    def test_negative_profit_factor_is_rejected(self):
+    def test_negative_expectancy_is_rejected(self):
         trades = self.make_trades(10, 0.40) + self.make_trades(20, -0.55)
         result = {
             "trades": trades,
