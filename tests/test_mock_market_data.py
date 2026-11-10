@@ -62,7 +62,9 @@ class MockMarketDataHarnessTests(unittest.TestCase):
         for kind in ("negative_volume", "inconsistent_ohlc", "non_finite_close"):
             with self.subTest(kind=kind):
                 candles = generate_ohlcv(count=60)
-                candles[10] = make_invalid_ohlcv(kind)
+                invalid = make_invalid_ohlcv(kind)
+                invalid[0] = candles[10][0]
+                candles[10] = invalid
                 with self.assertRaises(ValueError):
                     BacktestService().run(candles)
 
