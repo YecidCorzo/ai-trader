@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
+import logging
 
 from services.market_services import MarketService
 from services.signal_validation import validate_signal_history
@@ -15,6 +16,14 @@ from strategies.advanced_strategy import AdvancedStrategy
 from services.backtest_service import BacktestService
 from services.backtest_review import review_backtest
 from services.backtest_research import run_walk_forward_backtests
+
+logger = logging.getLogger(__name__)
+
+
+def _internal_server_error(operation):
+    logger.exception("Unexpected error while executing %s", operation)
+    return HTTPException(status_code=500, detail="Error interno del servidor")
+
 
 app = FastAPI(title="AI Trader API")
 market_service = MarketService("SOLUSDT")
@@ -177,12 +186,8 @@ def get_signal_v2():
 
     except HTTPException:
         raise
-    except Exception as error:
-        return {
-            "error": str(error),
-            "symbol": "SOL/USDT",
-            "mode": "paper",
-        }
+    except Exception:
+        raise _internal_server_error("unexpected_api_operation") from None
 
 app.mount(
     "/dashboard",
@@ -240,12 +245,8 @@ def run_backtest(
 
         return result
 
-    except Exception as error:
-        return {
-            "error": str(error),
-            "symbol": "SOL/USDT",
-            "mode": "paper",
-        }
+    except Exception:
+        raise _internal_server_error("unexpected_api_operation") from None
 
 
 
@@ -312,5 +313,5 @@ def run_walk_forward(
         return result
     except HTTPException:
         raise
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+    except Exception:
+        raise _internal_server_error("walk_forward_backtest") from None
