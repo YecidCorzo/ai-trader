@@ -95,6 +95,39 @@ class BacktestEndpointTests(unittest.TestCase):
             )
         self.assertEqual(context.exception.status_code, 400)
 
+    def test_backtest_hides_unexpected_exception_details(self):
+        with patch.object(
+            main.market_service,
+            "get_candles",
+            side_effect=RuntimeError("private upstream diagnostic"),
+        ):
+            with self.assertRaises(HTTPException) as context:
+                main.run_backtest(limit=5000, interval="5m")
+
+        self.assertEqual(context.exception.status_code, 500)
+        self.assertEqual(context.exception.detail, "Error interno del servidor")
+        self.assertNotIn("private upstream diagnostic", context.exception.detail)
+
+    def test_walk_forward_hides_unexpected_exception_details(self):
+        with patch.object(
+            main.market_service,
+            "get_candles",
+            side_effect=RuntimeError("private upstream diagnostic"),
+        ):
+            with self.assertRaises(HTTPException) as context:
+                main.run_walk_forward(
+                    limit=40,
+                    interval="1d",
+                    train_size=20,
+                    validation_size=10,
+                    test_size=5,
+                    step_size=5,
+                )
+
+        self.assertEqual(context.exception.status_code, 500)
+        self.assertEqual(context.exception.detail, "Error interno del servidor")
+        self.assertNotIn("private upstream diagnostic", context.exception.detail)
+
 
 if __name__ == "__main__":
     unittest.main()
