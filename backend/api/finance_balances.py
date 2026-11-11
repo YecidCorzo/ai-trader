@@ -10,8 +10,10 @@ from pydantic import BaseModel, Field
 
 try:
     from backend.api.finance import get_connection
+    from backend.repositories.finance_repository import FinanceRepository
 except ImportError:  # Support uvicorn with backend/ as the app directory.
     from api.finance import get_connection
+    from repositories.finance_repository import FinanceRepository
 
 
 router = APIRouter(prefix="/api/finance", tags=["personal-finance"])
@@ -51,27 +53,16 @@ def set_opening_balance(
     payload: OpeningBalanceCreate,
     connection: sqlite3.Connection = Depends(get_connection),
 ):
-    account = connection.execute(
-        """SELECT a.currency_code, a.is_active, c.minor_unit
-           FROM accounts a JOIN currencies c ON c.code = a.currency_code
-           WHERE a.id = ?""",
-        (account_id,),
-    ).fetchone()
+    repository = FinanceRepository(connection)
+    account = repository.get_account_with_currency(account_id)
     if account is None or not account["is_active"]:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada o inactiva")
 
     amount_minor = _signed_minor_amount(payload.amount, account["minor_unit"])
     as_of = _utc_datetime(payload.as_of)
     try:
-        connection.execute(
-            """INSERT INTO account_opening_balances (account_id, amount_minor, currency_code, as_of)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(account_id) DO UPDATE SET
-                   amount_minor = excluded.amount_minor,
-                   currency_code = excluded.currency_code,
-                   as_of = excluded.as_of,
-                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')""",
-            (account_id, amount_minor, account["currency_code"], as_of),
+        repository.upsert_opening_balance(
+            account_id, amount_minor, account["currency_code"], as_of
         )
         connection.commit()
     except sqlite3.IntegrityError:
@@ -88,14 +79,8 @@ def set_opening_balance(
 
 @router.get("/balances")
 def list_account_balances(connection: sqlite3.Connection = Depends(get_connection)):
-    accounts = connection.execute(
-        """SELECT a.id, a.name, a.account_type, a.currency_code,
-                  o.amount_minor AS opening_balance_minor, o.as_of AS opening_balance_as_of
-           FROM accounts a
-           LEFT JOIN account_opening_balances o ON o.account_id = a.id
-           WHERE a.is_active = 1
-           ORDER BY a.currency_code, a.name COLLATE NOCASE, a.id"""
-    ).fetchall()
+    repository = FinanceRepository(connection)
+    accounts = repository.list_active_accounts_with_opening_balances()
 
     results = []
     for account in accounts:
@@ -115,16 +100,9 @@ def list_account_balances(connection: sqlite3.Connection = Depends(get_connectio
             })
             continue
 
-        params = (account["id"], account["opening_balance_as_of"])
-        movements = connection.execute(
-            """SELECT
-                 COALESCE(SUM(CASE WHEN transaction_type = 'income' THEN amount_minor ELSE 0 END), 0) AS income_minor,
-                 COALESCE(SUM(CASE WHEN transaction_type = 'expense' THEN amount_minor ELSE 0 END), 0) AS expense_minor,
-                 SUM(CASE WHEN transaction_type IN ('transfer', 'adjustment') THEN 1 ELSE 0 END) AS unsupported_count
-               FROM transactions
-               WHERE account_id = ? AND occurred_at > ?""",
-            params,
-        ).fetchone()
+        movements = repository.account_movements_after(
+            account["id"], account["opening_balance_as_of"]
+        )
         unsupported = movements["unsupported_count"] or 0
         complete = unsupported == 0
         results.append({
