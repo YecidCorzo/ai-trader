@@ -36,6 +36,8 @@ def chronological_walk_forward_splits(
     _positive_int(train_size, "train_size")
     _positive_int(validation_size, "validation_size")
     _positive_int(test_size, "test_size")
+    if test_size < 2:
+        raise ValueError("test_size debe ser al menos 2 para calcular Buy & Hold")
     if step_size is None:
         step_size = test_size
     _positive_int(step_size, "step_size")

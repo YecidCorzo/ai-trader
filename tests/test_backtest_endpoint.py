@@ -70,6 +70,18 @@ class BacktestEndpointTests(unittest.TestCase):
         self.assertEqual(result["mode"], "paper")
         self.assertEqual(result["symbol"], "SOL/USDT")
 
+    def test_walk_forward_endpoint_rejects_single_candle_test_size(self):
+        with self.assertRaises(HTTPException) as context:
+            main.run_walk_forward(
+                limit=100,
+                interval="1d",
+                train_size=50,
+                validation_size=20,
+                test_size=1,
+                step_size=1,
+            )
+        self.assertEqual(context.exception.status_code, 422)
+
     def test_walk_forward_endpoint_rejects_overlapping_test_windows(self):
         with self.assertRaises(HTTPException) as context:
             main.run_walk_forward(
