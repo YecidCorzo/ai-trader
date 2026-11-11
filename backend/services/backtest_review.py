@@ -48,9 +48,30 @@ def review_backtest(result, candles, parameter_count=8):
         slippage_tested=float(result.get("slippage_rate", 0)) > 0,
     )
 
+    # A single aggregate backtest cannot establish the multiple independent
+    # chronological out-of-sample windows required by this project's research
+    # protocol. Never translate a generic score into a deployment instruction.
+    research_blockers = []
+    if total_trades < 100:
+        research_blockers.append("fewer_than_100_trades")
+    if years_tested < 5:
+        research_blockers.append("less_than_5_years")
+    if float(result.get("max_drawdown_percent", 0)) >= 20:
+        research_blockers.append("drawdown_at_or_above_20_percent")
+    if evaluation["expectancy"] <= 0:
+        research_blockers.append("non_positive_expectancy")
+    profit_factor = result.get("profit_factor")
+    if profit_factor is None or float(profit_factor) <= 1.2:
+        research_blockers.append("profit_factor_not_above_1_2")
+    research_blockers.append("multiple_out_of_sample_windows_not_verified")
+
     return {
-        "framework": "claude_trading_skills_backtest_expert",
+        "framework": "ai_trader_research_gates",
         "years_tested_exact": round(years_tested, 6),
         "live_trading_authorized": False,
-        **evaluation,
+        "scorecard": evaluation,
+        "decision": "VALIDATION_REQUIRED",
+        "blocking_reasons": research_blockers,
+        "research_gates_passed": False,
+        "research_gates_complete": False,
     }

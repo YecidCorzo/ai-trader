@@ -1,23 +1,29 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import requests
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
-from services.market_services import MarketService
+import logging
 
+from services.market_services import MarketService
+from services.signal_validation import validate_signal_history
 from indicators.ema import calculate_ema
 from indicators.rsi import calculate_rsi
 from indicators.macd import calculate_macd
 from indicators.vwap import calculate_vwap
 from indicators.atr import calculate_atr
-
 from strategies.ema_rsi_strategy import EmaRsiStrategy
-from strategies.advanced_strategy import AdvancedStrategy
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 from strategies.advanced_strategy import AdvancedStrategy
 from services.backtest_service import BacktestService
 from services.backtest_review import review_backtest
+from services.backtest_research import run_walk_forward_backtests
+
+logger = logging.getLogger(__name__)
+
+
+def _internal_server_error(operation):
+    logger.exception("Unexpected error while executing %s", operation)
+    return HTTPException(status_code=500, detail="Error interno del servidor")
+
 
 app = FastAPI(title="AI Trader API")
 market_service = MarketService("SOLUSDT")
@@ -85,51 +91,20 @@ def get_candles():
             for row in rows
         ]
     }
-def calculate_ema(values, period):
-    multiplier = 2 / (period + 1)
-    ema = values[0]
-
-    for price in values[1:]:
-        ema = (price - ema) * multiplier + ema
-
-    return ema
-
-
-def calculate_rsi(closes, period=14):
-    gains = []
-    losses = []
-
-    for i in range(1, len(closes)):
-        change = closes[i] - closes[i - 1]
-
-        if change > 0:
-            gains.append(change)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(change))
-
-    if len(gains) < period:
-        return 50
-
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period
-
-    if avg_loss == 0:
-        return 100
-
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-
 @app.get("/api/signal")
 def get_signal():
     rows = market_service.get_candles(
         interval="5m",
-        limit=100
+        limit=5000,
+        closed_only=True,
     )
 
     closes = [float(row[4]) for row in rows]
+
+    try:
+        validate_signal_history(closes, minimum=15)
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
     ema9 = calculate_ema(closes, 9)
     ema21 = calculate_ema(closes, 21)
@@ -158,7 +133,8 @@ def get_signal_v2():
         # Obtener velas de Binance
         raw_candles = market_service.get_candles(
             interval="5m",
-            limit=100
+            limit=5000,
+            closed_only=True,
         )
 
         # Convertir las velas al formato que usan los indicadores
@@ -174,11 +150,14 @@ def get_signal_v2():
         ]
 
         closes = [candle["close"] for candle in candles]
+        validate_signal_history(closes, minimum=50)
 
         # Calcular medias móviles
-        ema_fast = calculate_ema(closes[-9:], 9)
-        ema_slow = calculate_ema(closes[-21:], 21)
-        ema_trend = calculate_ema(closes[-50:], 50)
+        # Use the complete available history for each EMA. Truncating to
+        # exactly one period changes the EMA seed and diverges from backtests.
+        ema_fast = calculate_ema(closes, 9)
+        ema_slow = calculate_ema(closes, 21)
+        ema_trend = calculate_ema(closes, 50)
 
         # Calcular indicadores
         rsi = calculate_rsi(closes, period=14)
@@ -205,13 +184,11 @@ def get_signal_v2():
 
         return result
 
-    except Exception as error:
-        return {
-            "error": str(error),
-            "symbol": "SOL/USDT",
-            "mode": "paper",
-        }
-    
+    except HTTPException:
+        raise
+    except Exception:
+        raise _internal_server_error("unexpected_api_operation") from None
+
 app.mount(
     "/dashboard",
     StaticFiles(
@@ -222,14 +199,23 @@ app.mount(
 )
 
 @app.get("/api/backtest")
-def run_backtest():
+def run_backtest(
+    limit: int = Query(5000, ge=100, le=100000),
+    interval: str = Query("5m"),
+):
+    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
+    if interval not in allowed_intervals:
+        raise HTTPException(status_code=400, detail="Intervalo no soportado")
+
     try:
         print("BACKTEST 1: solicitando velas", flush=True)
 
-        # Descargar hasta 1000 velas históricas de 5 minutos
+        # MarketService pagina internamente; el límite permite ampliar
+        # el histórico sin duplicar la lógica de descarga.
         raw_candles = market_service.get_candles(
-            interval="5m",
-            limit=5000,
+            interval=interval,
+            limit=limit,
+            closed_only=True,
         )
         print(f"BACKTEST 2: velas recibidas: {len(raw_candles)}", flush=True)
 
@@ -249,18 +235,88 @@ def run_backtest():
         print("BACKTEST 4: cálculo terminado", flush=True)
 
         result["symbol"] = "SOL/USDT"
-        result["interval"] = "5m"
+        result["interval"] = interval
+        result["candles_requested"] = limit
+        result["candles_received"] = len(raw_candles)
+        if raw_candles:
+            result["history_start"] = raw_candles[0][0]
+            result["history_end"] = raw_candles[-1][0]
         result["mode"] = "paper"
 
         return result
 
-    except Exception as error:
-        return {
-            "error": str(error),
-            "symbol": "SOL/USDT",
-            "mode": "paper",
-        }
+    except Exception:
+        raise _internal_server_error("unexpected_api_operation") from None
 
 
 
     
+
+
+@app.get("/api/backtest/walk-forward")
+def run_walk_forward(
+    limit: int = Query(10000, ge=100, le=100000),
+    interval: str = Query("1d"),
+    train_size: int = Query(5000, ge=30, le=90000),
+    validation_size: int = Query(1000, ge=1, le=50000),
+    test_size: int = Query(1000, ge=2, le=50000),
+    step_size: int = Query(1000, ge=1, le=50000),
+):
+    """Run fixed-parameter chronological out-of-sample tests in PAPER mode."""
+    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
+    if interval not in allowed_intervals:
+        raise HTTPException(status_code=400, detail="Intervalo no soportado")
+    if test_size < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="test_size debe ser al menos 2 para calcular Buy & Hold",
+        )
+    if step_size < test_size:
+        raise HTTPException(
+            status_code=400,
+            detail="step_size debe ser mayor o igual que test_size para evitar ventanas de prueba solapadas",
+        )
+    required = train_size + validation_size + test_size
+    if required > limit:
+        raise HTTPException(
+            status_code=400,
+            detail="limit debe cubrir train_size + validation_size + test_size",
+        )
+    try:
+        raw_candles = market_service.get_candles(
+            interval=interval,
+            limit=limit,
+            closed_only=True,
+        )
+        if len(raw_candles) < required:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Histórico insuficiente: se necesitan {required} velas y llegaron {len(raw_candles)}",
+            )
+        result = run_walk_forward_backtests(
+            raw_candles,
+            train_size=train_size,
+            validation_size=validation_size,
+            test_size=test_size,
+            step_size=step_size,
+            backtest_kwargs={
+                "initial_balance": 10000.0,
+                "fee_rate": 0.001,
+                "slippage_rate": 0.0005,
+                "risk_per_trade": 0.01,
+            },
+        )
+        result.update({
+            "symbol": "SOL/USDT",
+            "interval": interval,
+            "candles_requested": limit,
+            "candles_received": len(raw_candles),
+            "history_start": raw_candles[0][0],
+            "history_end": raw_candles[-1][0],
+            "mode": "paper",
+        })
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise _internal_server_error("walk_forward_backtest") from None

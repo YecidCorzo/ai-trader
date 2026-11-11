@@ -20,18 +20,24 @@ class MarketService:
 
 
 
-    def get_candles(self, interval="5m", limit=100):
+    @staticmethod
+    def _filter_closed_candles(candles, now_ms):
+        from services.candle_utils import filter_closed_candles
+        return filter_closed_candles(candles, now_ms)
+
+    def get_candles(self, interval="5m", limit=100, closed_only=False):
         """Descarga velas históricas por lotes de hasta 1000."""
         limit = int(limit)
 
         if limit < 1:
             raise ValueError("El límite de velas debe ser mayor que cero")
 
+        fetch_limit = limit + 1 if closed_only else limit
         candles = []
         end_time = None
 
-        while len(candles) < limit:
-            batch_limit = min(1000, limit - len(candles))
+        while len(candles) < fetch_limit:
+            batch_limit = min(1000, fetch_limit - len(candles))
 
             params = {
                 "symbol": self.symbol,
@@ -70,7 +76,11 @@ class MarketService:
             # Continuar hacia atrás desde la vela más antigua.
             end_time = int(batch[0][0]) - 1
 
-            if len(candles) >= limit:
+            if len(candles) >= fetch_limit:
                 break
+
+        if closed_only:
+            import time
+            candles = self._filter_closed_candles(candles, int(time.time() * 1000))
 
         return candles[-limit:]

@@ -22,6 +22,6 @@ The engine currently:
 - Simulates entries at the next candle open and applies configurable fees and slippage.
 - Resolves stop/target ambiguity conservatively (stop first) and fills stop gaps at the candle open.
 - Marks open positions to market for maximum drawdown, including estimated exit fees.
-- Caps short notional using available balance, but does not model exchange margin, maintenance margin, or liquidation. Short-side results therefore remain a simplified paper simulation.
+- Caps short notional using available balance. SHORT positions use a simplified isolated 1x model with full entry notional as collateral and a configurable maintenance margin (default 25%); estimated entry/exit fees are included in the liquidation threshold. A gap beyond liquidation fills at the candle open with adverse slippage. This is not an exchange-specific margin simulator: funding, borrow costs, tiered maintenance schedules, mark/index price, partial liquidation, and exchange liquidation fees are not modeled.
 
 The evaluator's DEPLOY decision is a research verdict only. The API explicitly returns live_trading_authorized=false; no live execution path is enabled. Continue validating accounting, data quality, and execution assumptions before relying on any backtest result.

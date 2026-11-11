@@ -154,3 +154,72 @@ A feature is not considered complete merely because it works once on the develop
 - The reported 128-trade backtest is not proof of strategy validity; the negative expectancy is a rejection signal, not a reason to tune parameters until the mechanics are audited.
 - Signal endpoint and dashboard disagreement remains open; unify indicators and signal source after regression tests.
 - PAPER MODE remains mandatory. No live order execution is implemented or authorized.
+
+
+## Implementation log — 2026-11-09
+
+### Backtest research foundation (feature/backtest-statistical-research)
+- Added chronological expanding-window train/validation/test split utility. Each test window is held out from its corresponding training and validation slices; no random shuffle is used.
+- Added seeded iid bootstrap resampling of recorded net trade PnL, reporting final-balance and maximum-drawdown percentiles plus an explicitly defined drawdown-based ruin threshold.
+- Added a long-only Buy & Hold baseline using the first candle open and final candle close, charging adverse entry/exit slippage and fees.
+- Added standard-library regression tests for chronological boundaries, insufficient history, deterministic Monte Carlo output, invalid samples and benchmark costs.
+- These are research utilities only. They are not yet wired into the API or the strategy engine; a caller must supply already validated, completed candles and closed trades.
+- Monte Carlo iid resampling does not preserve trade clustering or changing market regimes. Its output is a conditional historical resampling estimate, not a forecast or proof of edge.
+- Parameter sensitivity, true rolling out-of-sample strategy reruns, benchmark parity review and API integration remain separate gates.
+
+### Claude Trading Skills integration policy
+- Preserve upstream attribution and license for every vendored skill.
+- Integrate skills as isolated, testable domain capabilities; do not blindly copy prompts or allow an LLM to perform authoritative accounting or order execution.
+- Backtest Expert is the first vendored skill and remains a review layer, not deployment authorization.
+- Next candidates for evaluation: position sizing/risk management, market-regime analysis and trading journal/memory. Verify each candidate against the upstream repository and license before adding it.
+- All skill outputs must disclose inputs, assumptions, provenance and limitations. No skill can enable live trading.
+
+### Branch and review note
+- PRs #14–#16 were merged into their respective stacked feature branches. They are not thereby considered merged into `main`; the branch chain must be reviewed and integrated deliberately.
+- The statistical research work is based on the latest VWAP/signal feature branch and is submitted separately for review.
+- PAPER MODE remains mandatory.
+
+
+### Upstream Claude Trading Skills catalog review — 2026-11-09
+Reviewed the upstream skill catalog at commit `163ceb48968c71a701dd9cc77d827258d9b5b348` (MIT license). Candidate selection is based on actual skill documentation, not assumed names:
+
+1. **crypto-regime-analyzer** — strong fit for crypto market posture; it uses CoinGecko and Binance public funding data. Integrate only after provider adapters, freshness checks, missing-component handling and rate-limit behavior are independently tested. Its risk-on/off bands are heuristic, not validated allocation instructions.
+2. **position-sizer** — useful risk-sizing methodology, but the upstream skill is explicitly long-stock oriented. Reuse only the validated fixed-fractional/ATR concepts after adapting contracts for crypto, fees, slippage, minimum notional and current paper portfolio exposure. Do not import stock-specific share assumptions or Kelly outputs as an order recommendation.
+3. **drawdown-circuit-breaker** — valuable as a paper-risk guardrail, but it depends on Trader Memory Core state and uses US Eastern calendar boundaries. Adapt the state contract and timezone policy before integration; it is a recommendation layer, not broker enforcement.
+4. **trader-memory-core** — potentially useful for thesis lifecycle and postmortems, but upstream dependencies include YAML/JSON Schema and its accounting explicitly rejects short-equity accounting. Do not import it wholesale into the existing crypto engine; first define a platform-neutral thesis/trade journal model and preserve explicit LONG/SHORT semantics.
+5. **portfolio-manager** — not selected for initial integration because its full mode is Alpaca-centric and requires brokerage connectivity. Its offline CSV review can be evaluated later, but no broker credentials or live account access are part of the current scope.
+
+The upstream skill names above are verified candidates, not claims that those skills have already been installed. Backtest Expert remains the only upstream skill vendored so far. Every additional skill will be adapted behind a local interface, with source/license attribution and tests; no third-party script will be allowed to execute trades or override PAPER MODE.
+
+
+## Strategy profitability research gate — 2026-11-09
+
+### Objective
+Find out whether an existing or minimally modified strategy has a repeatable positive net edge on SOL/USDT. This is a research objective, not a promised outcome. Preserve the financial-intelligence platform direction and keep all trading in PAPER MODE.
+
+### Immediate research sequence
+1. **Establish a reproducible baseline.** Freeze the current EMA 9/21 + Wilder RSI 14 crossover rules, ATR stop, 2R target, 0.1% fee per side and 0.05% adverse slippage. Record exact candle source, interval, UTC range, retrieval time, and candle count with every run.
+2. **Audit the simulator before tuning.** Verify entry at next-candle open, stop/target ordering, gap handling, fee application, sizing, short collateral assumptions, and end-of-data liquidation. Add reference tests for any discrepancy before strategy changes.
+3. **Diagnose, do not optimize blindly.** Report LONG and SHORT separately, net expectancy per trade, profit factor, trade count, exposure, average win/loss, drawdown, fees, and benchmark-relative return. A positive aggregate caused by one side or one short period is not sufficient.
+4. **Test a small, predeclared hypothesis set.** Compare baseline against simple, explainable variants (trend filter, volatility/regime filter, and long-only/short-only ablations). Change one hypothesis at a time. Do not search a huge parameter grid and select the historical winner.
+5. **Use chronological evaluation.** Select parameters only on training/validation windows. Freeze the selected configuration before evaluating the next untouched test window. Keep a final holdout untouched until the research protocol is fixed.
+6. **Compare fairly.** Use the same timestamps, instrument, starting capital, fee and slippage assumptions for strategy and Buy & Hold. Report both absolute net return and excess return over the benchmark.
+7. **Paper-forward validation.** A historical result is not sufficient for promotion. Run the frozen candidate in paper mode on unseen live market data and compare expected versus realized execution costs.
+
+### Minimum evidence before calling a strategy promising
+- At least 100 closed out-of-sample trades across multiple chronological test windows; if the sample cannot reach this, mark evidence as insufficient rather than lowering the bar.
+- Positive net expectancy after fees and slippage in aggregate out-of-sample results.
+- Profit factor above 1.2 out of sample, with no single window or side masking material losses in the other windows.
+- Maximum drawdown below 20% in the evaluated paper portfolio, with exposure and tail losses disclosed.
+- Positive net excess return versus Buy & Hold over the same test windows, or a clearly stated risk-adjusted benefit if absolute return is lower.
+- No material data leakage, lookahead, survivorship or execution-model issue found in the audit.
+- Results repeated on a second market regime and followed by a paper-forward observation period.
+
+These are internal research gates, not guarantees and not financial advice. Passing them means "promising enough for continued paper validation", never automatic live deployment.
+
+### Current known status
+- The prior reported EMA/RSI backtest was negative (−33.22% over its reported sample); it is not a viable profitability baseline.
+- Existing statistical helpers provide chronological slicing and a simple iid trade-PnL bootstrap, but they do not yet rerun strategy parameter selection across train/validation/test windows.
+- The current backtest route fetches up to 5,000 closed 5-minute candles. This is only about 17 days of data at full coverage and is inadequate for robust multi-regime conclusions.
+- The advanced strategy's rule score is not a calibrated win probability and is not evidence of positive expectancy.
+- No strategy is currently certified profitable. Keep PAPER MODE mandatory.

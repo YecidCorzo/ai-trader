@@ -71,6 +71,14 @@
       text-align: left; padding: 13px 8px;
       border-bottom: 1px solid #263047; font-size: 14px;
     }
+    .backtest-controls { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+    .backtest-controls label { display: flex; flex-direction: column; gap: 6px; color: #96a4bc; font-size: 13px; flex: 1; min-width: 140px; }
+    .backtest-controls select, .backtest-controls input {
+      background: #0b1020; color: #e8edf8; border: 1px solid #263047;
+      border-radius: 8px; padding: 11px; min-width: 0;
+    }
+    .backtest-run { background: #3156a5; margin-top: 14px; }
+    #backtest-result { white-space: pre-wrap; line-height: 1.6; margin-top: 14px; color: #d7e0ef; }
     @media (max-width: 700px) {
       .grid { grid-template-columns: 1fr; }
       header { padding: 18px; }
@@ -116,6 +124,46 @@
       <div id="signal-box" class="signal-box">Señal: Cargando...
       </div>
       <div id="status" class="status">Modo demo: no se ejecutan operaciones.</div>
+    </section>
+
+    <section class="card">
+      <h2>Investigación de estrategia <span class="muted">· Backtest PAPER</span></h2>
+      <p class="muted">SOL / USDT · Sin órdenes reales. El histórico ampliado permite evaluar más condiciones de mercado.</p>
+      <div class="backtest-controls">
+        <label>Intervalo
+          <select id="backtest-interval">
+            <option value="5m">5 minutos</option>
+            <option value="15m">15 minutos</option>
+            <option value="1h">1 hora</option>
+            <option value="4h">4 horas</option>
+            <option value="1d">1 día</option>
+          </select>
+        </label>
+        <label>Número de velas (100–100.000)
+          <input id="backtest-limit" type="number" min="100" max="100000" step="100" value="5000">
+        </label>
+      </div>
+      <button class="backtest-run" id="run-backtest" type="button">Ejecutar backtest PAPER</button>
+      <div id="backtest-result" class="status" aria-live="polite">Todavía no se ha ejecutado ningún backtest.</div>
+      <hr style="border-color:#263047; margin:22px 0;">
+      <h3>Validación walk-forward <span class="muted">· Fuera de muestra</span></h3>
+      <p class="muted">Divide el histórico cronológicamente. Los parámetros actuales permanecen fijos; cada ventana de prueba usa capital PAPER independiente.</p>
+      <div class="backtest-controls">
+        <label>Entrenamiento (velas)
+          <input id="wf-train" type="number" min="30" max="90000" step="100" value="3000">
+        </label>
+        <label>Validación (velas)
+          <input id="wf-validation" type="number" min="1" max="50000" step="100" value="1000">
+        </label>
+        <label>Prueba por ventana (velas)
+          <input id="wf-test" type="number" min="1" max="50000" step="100" value="1000">
+        </label>
+        <label>Avance entre ventanas
+          <input id="wf-step" type="number" min="1" max="50000" step="100" value="1000">
+        </label>
+      </div>
+      <button class="backtest-run" id="run-walk-forward" type="button">Ejecutar validación walk-forward PAPER</button>
+      <div id="walk-forward-result" class="status" aria-live="polite">Validación todavía no ejecutada.</div>
     </section>
 
     <section class="card">
@@ -185,6 +233,126 @@ async function loadPrice() {
     priceElement.textContent = "Error de conexión";
   }
 }
+
+async function runBacktest() {
+  const button = document.getElementById("run-backtest");
+  const output = document.getElementById("backtest-result");
+  const limitInput = document.getElementById("backtest-limit");
+  const interval = document.getElementById("backtest-interval").value;
+  const limit = Number(limitInput.value);
+
+  if (!Number.isInteger(limit) || limit < 100 || limit > 100000) {
+    output.textContent = "Introduce un número entero de velas entre 100 y 100.000.";
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Calculando…";
+  output.textContent = "Descargando histórico y calculando. Puede tardar según el número de velas.";
+
+  try {
+    const query = new URLSearchParams({ limit: String(limit), interval });
+    const response = await fetch("/api/backtest?" + query.toString());
+    const data = await response.json();
+
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || data.error || "No se pudo completar el backtest.");
+    }
+
+    const review = data.quality_review || {};
+    const start = data.history_start ? new Date(Number(data.history_start)).toLocaleString("sv-SE") : "N/D";
+    const end = data.history_end ? new Date(Number(data.history_end)).toLocaleString("sv-SE") : "N/D";
+    const pf = data.profit_factor == null ? "N/D" : Number(data.profit_factor).toFixed(2);
+
+    output.textContent = [
+      "MODO: " + String(data.mode || "paper").toUpperCase(),
+      "Histórico: " + data.candles_received + " / " + data.candles_requested + " velas · " + data.interval,
+      "Periodo: " + start + " → " + end,
+      "Balance final: " + Number(data.final_balance).toFixed(2) + " USDT",
+      "Rentabilidad: " + Number(data.return_percent).toFixed(2) + "%",
+      "Operaciones: " + data.total_trades + " · Win rate: " + Number(data.win_rate_percent).toFixed(2) + "%",
+      "Profit factor: " + pf + " · Drawdown máximo: " + Number(data.max_drawdown_percent).toFixed(2) + "%",
+      "Expectativa neta/operación: " + (data.expectancy_per_trade == null ? "N/D" : Number(data.expectancy_per_trade).toFixed(4)) + " USDT",
+      "LONG neto: " + Number(data.long_net_pnl).toFixed(2) + " · SHORT neto: " + Number(data.short_net_pnl).toFixed(2),
+      "Evaluación: " + (review.decision || "No disponible") +
+        " · Calidad: " + (review.scorecard?.quality_score == null ? "N/D" : review.scorecard.quality_score + "/100"),
+      "Veredicto orientativo: " + (review.scorecard?.verdict || "N/D"),
+      "Motivos de bloqueo: " + ((review.blocking_reasons || []).join(", ") || "Ninguno reportado"),
+      "Alertas: " + ((review.scorecard?.red_flags || []).map(flag => flag.id + " (" + flag.severity + ")").join(", ") || "Ninguna reportada"),
+      "Comisiones totales: " + (data.total_fees == null ? "N/D" : Number(data.total_fees).toFixed(2)) + " USDT",
+      "Aviso: la puntuación es un filtro de calidad, no una autorización para operar ni prueba de rentabilidad futura."
+    ].join("\n");
+  } catch (error) {
+    output.textContent = "Error en backtest: " + error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Ejecutar backtest PAPER";
+  }
+}
+
+document.getElementById("run-backtest").addEventListener("click", runBacktest);
+
+async function runWalkForward() {
+  const button = document.getElementById("run-walk-forward");
+  const output = document.getElementById("walk-forward-result");
+  const interval = document.getElementById("backtest-interval").value;
+  const limit = Number(document.getElementById("backtest-limit").value);
+  const train = Number(document.getElementById("wf-train").value);
+  const validation = Number(document.getElementById("wf-validation").value);
+  const test = Number(document.getElementById("wf-test").value);
+  const step = Number(document.getElementById("wf-step").value);
+  const values = [limit, train, validation, test, step];
+  if (!values.every(Number.isInteger) || values.some(value => value <= 0) ||
+      train < 30 || train + validation + test > limit) {
+    output.textContent = "Revisa los tamaños: enteros positivos, entrenamiento mínimo 30 y suma de ventanas no superior al histórico.";
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Validando ventanas…";
+  output.textContent = "Descargando histórico y ejecutando pruebas cronológicas independientes…";
+  try {
+    const query = new URLSearchParams({
+      limit: String(limit), interval, train_size: String(train),
+      validation_size: String(validation), test_size: String(test),
+      step_size: String(step)
+    });
+    const response = await fetch("/api/backtest/walk-forward?" + query.toString());
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || data.error || "Falló la validación walk-forward.");
+    }
+    const fmt = value => value == null ? "N/D" : Number(value).toFixed(2);
+    const foldLines = (data.folds || []).map(fold =>
+      "Ventana " + fold.fold + " · trades " + fold.trade_count +
+      " · PnL " + fmt(fold.net_pnl) + " USDT · retorno " +
+      fmt(fold.return_percent) + "% · DD " + fmt(fold.max_drawdown_percent) + "%"
+    );
+    output.textContent = [
+      "MODO: " + String(data.mode).toUpperCase() + " · " + data.framework,
+      "Ventanas completadas: " + data.fold_count + " · Operaciones: " + data.total_trades,
+      "PnL neto agregado: " + fmt(data.net_pnl) + " USDT",
+      "Expectativa neta/operación: " + fmt(data.average_trade_expectancy) + " USDT",
+      "Win rate: " + fmt(data.win_rate_percent) + "% · Profit factor: " + fmt(data.profit_factor),
+      "Máximo drawdown entre ventanas: " + fmt(data.max_fold_drawdown_percent) + "%",
+      "Retorno medio de estrategia: " + fmt(data.average_test_return_percent) + "%",
+      "Buy & Hold medio: " + fmt(data.average_buy_and_hold_return_percent) + "%",
+      "Exceso frente a Buy & Hold: " + fmt(data.excess_return_vs_buy_and_hold_percent) + "%",
+      "LONG neto: " + fmt(data.long_net_pnl) + " · SHORT neto: " + fmt(data.short_net_pnl),
+      "Comisiones: " + fmt(data.total_fees) + " USDT",
+      "Resultados por ventana:",
+      ...foldLines,
+      "Limitaciones: " + (data.limitations || []).join("; "),
+      "Esto es investigación PAPER con parámetros fijos, no autorización para operar en real."
+    ].join("\n");
+  } catch (error) {
+    output.textContent = "Error walk-forward: " + error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Ejecutar validación walk-forward PAPER";
+  }
+}
+document.getElementById("run-walk-forward").addEventListener("click", runWalkForward);
+
 
 loadDashboard();
 loadPrice();
