@@ -100,6 +100,55 @@ class PaperTradingRepository:
             (trade_id,),
         )
 
+    def count_open_trades(self) -> int:
+        row = self._one("SELECT COUNT(*) AS trade_count FROM paper_trades WHERE status = 'OPEN'")
+        return int(row["trade_count"])
+
+    def risk_metrics(
+        self, *, day_start: str, day_end: str, loss_streak_limit: int,
+    ) -> dict[str, Any]:
+        """Derive mutable risk counters from persisted PAPER ledger records."""
+        opened = self._one(
+            """SELECT COUNT(*) AS trade_count FROM paper_trades
+               WHERE opened_at >= ? AND opened_at < ?""",
+            (day_start, day_end),
+        )
+        closed_today = self._all(
+            """SELECT realized_pnl FROM paper_trades
+               WHERE status = 'CLOSED' AND closed_at >= ? AND closed_at < ?""",
+            (day_start, day_end),
+        )
+        from decimal import Decimal
+
+        daily_pnl = sum(
+            (Decimal(row["realized_pnl"]) for row in closed_today),
+            Decimal("0"),
+        )
+        # Timestamps have second-level precision and can tie for rapid closes.
+        # The append-only audit event rowid preserves the actual close insertion
+        # order; random trade IDs must never decide a consecutive-loss streak.
+        recent_closed = self._all(
+            """SELECT trade.realized_pnl
+               FROM paper_trades AS trade
+               JOIN paper_trade_events AS event
+                 ON event.trade_id = trade.id
+                AND event.event_type = 'TRADE_CLOSED'
+               WHERE trade.status = 'CLOSED'
+               ORDER BY event.rowid DESC
+               LIMIT ?""",
+            (loss_streak_limit,),
+        )
+        consecutive_losses = 0
+        for row in recent_closed:
+            if Decimal(row["realized_pnl"]) >= 0:
+                break
+            consecutive_losses += 1
+        return {
+            "trades_today": int(opened["trade_count"]),
+            "daily_realized_pnl": daily_pnl,
+            "consecutive_losses": consecutive_losses,
+        }
+
     def get_risk_control(self) -> sqlite3.Row:
         row = self._one("SELECT * FROM paper_risk_control WHERE id = 1")
         if row is None:

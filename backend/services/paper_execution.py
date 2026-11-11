@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 try:
@@ -47,8 +48,9 @@ def _non_negative_decimal(value: Decimal | str | int, field: str) -> Decimal:
 class PaperExecutionService:
     """Validate risk and breaker state before recording a simulated entry.
 
-    The caller supplies a current equity/daily-P&L/trade-count snapshot. Open
-    position count is read from the ledger inside a SQLite write transaction.
+    The caller supplies the paper-account equity, which has no persisted source
+    in this version. Daily P&L, open positions, daily trade count, consecutive
+    losses and breaker state are derived from SQLite while holding a write lock.
     """
 
     def __init__(
@@ -90,13 +92,21 @@ class PaperExecutionService:
             # Serialize concurrent entry checks against the same SQLite file.
             self._connection.execute("BEGIN IMMEDIATE")
             breaker_halted = self._breaker.status()["halted"]
-            open_positions = len(
-                self._repository.list_trades(status="OPEN", limit=500, offset=0)
+            now = datetime.now(timezone.utc)
+            day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            metrics = self._repository.risk_metrics(
+                day_start=day_start.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                day_end=day_end.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                loss_streak_limit=self._risk_engine.limits.max_consecutive_losses,
             )
             snapshot = replace(
                 risk_snapshot,
                 planned_loss=planned_loss,
-                open_positions=open_positions,
+                daily_realized_pnl=metrics["daily_realized_pnl"],
+                open_positions=self._repository.count_open_trades(),
+                trades_today=metrics["trades_today"],
+                consecutive_losses=metrics["consecutive_losses"],
                 circuit_breaker_halted=breaker_halted,
             )
             decision = self._risk_engine.evaluate(snapshot)
