@@ -101,7 +101,7 @@ class FinanceSchemaTests(unittest.TestCase):
              "2026-11-11T10:00:00Z", "2026-11-11T10:01:00Z"),
         )
 
-    def test_valuation_rejects_empty_fx_rate_text(self):
+    def test_valuation_rejects_invalid_or_non_positive_fx_rate_text(self):
         self.create_account(currency="EUR")
         self.connection.execute(
             """INSERT INTO transactions
@@ -109,15 +109,18 @@ class FinanceSchemaTests(unittest.TestCase):
                VALUES ('txn-eur', 'account-1', 'expense', 1000, 'EUR',
                        '2026-11-11T10:00:00Z')"""
         )
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.connection.execute(
-                """INSERT INTO transaction_valuations
-                   (id, transaction_id, value_minor, fx_rate, provider,
-                    effective_at, retrieved_at)
-                   VALUES ('bad-valuation', 'txn-eur', 1125, '', 'provider',
-                           '2026-11-11T10:00:00Z', '2026-11-11T10:01:00Z')"""
-            )
-        self.connection.rollback()
+        for invalid_rate in ('', '0', '-1.25', 'abc', '1.2.3'):
+            with self.subTest(fx_rate=invalid_rate):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.connection.execute(
+                        """INSERT INTO transaction_valuations
+                           (id, transaction_id, value_minor, fx_rate, provider,
+                            effective_at, retrieved_at)
+                           VALUES (?, 'txn-eur', 1125, ?, 'provider',
+                                   '2026-11-11T10:00:00Z', '2026-11-11T10:01:00Z')""",
+                        (f'bad-valuation-{invalid_rate!r}', invalid_rate),
+                    )
+                self.connection.rollback()
 
     def test_foreign_keys_prevent_account_deletion_with_transactions(self):
         self.create_account()
