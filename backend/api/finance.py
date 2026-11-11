@@ -12,8 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 try:
     from backend.infrastructure.database import connect_database, migrate_database
+    from backend.repositories.finance_repository import FinanceRepository
 except ImportError:  # Support running uvicorn with backend/ as the app directory.
     from infrastructure.database import connect_database, migrate_database
+    from repositories.finance_repository import FinanceRepository
 
 
 router = APIRouter(prefix="/api/finance", tags=["personal-finance"])
@@ -100,35 +102,31 @@ def _iso_datetime(value: datetime) -> str:
 
 @router.get("/currencies")
 def list_currencies(connection: sqlite3.Connection = Depends(get_connection)):
-    rows = connection.execute(
-        "SELECT code, name, minor_unit FROM currencies ORDER BY code"
-    ).fetchall()
-    return [dict(row) for row in rows]
+    return [dict(row) for row in FinanceRepository(connection).list_currencies()]
 
 
 @router.post("/accounts", status_code=status.HTTP_201_CREATED)
 def create_account(payload: AccountCreate, connection: sqlite3.Connection = Depends(get_connection)):
+    repository = FinanceRepository(connection)
     name = _clean_text(payload.name)
     if not name:
         raise HTTPException(status_code=422, detail="El nombre de la cuenta no puede estar vacío")
-    currency = connection.execute(
-        "SELECT code FROM currencies WHERE code = ?", (payload.currency_code,)
-    ).fetchone()
-    if currency is None:
+    if repository.get_currency(payload.currency_code) is None:
         raise HTTPException(status_code=422, detail="Moneda no soportada")
     account_id = str(uuid4())
     try:
-        connection.execute(
-            """INSERT INTO accounts (id, name, account_type, currency_code, institution)
-               VALUES (?, ?, ?, ?, ?)""",
-            (account_id, name, payload.account_type, payload.currency_code,
-             _clean_text(payload.institution) or None if payload.institution else None),
+        repository.create_account(
+            account_id,
+            name,
+            payload.account_type,
+            payload.currency_code,
+            _clean_text(payload.institution) or None if payload.institution else None,
         )
         connection.commit()
     except sqlite3.IntegrityError:
         connection.rollback()
         raise HTTPException(status_code=409, detail="No se pudo crear la cuenta") from None
-    row = connection.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    row = repository.get_account(account_id)
     return dict(row)
 
 
@@ -137,16 +135,13 @@ def list_accounts(
     include_inactive: bool = False,
     connection: sqlite3.Connection = Depends(get_connection),
 ):
-    query = "SELECT * FROM accounts"
-    if not include_inactive:
-        query += " WHERE is_active = 1"
-    query += " ORDER BY name COLLATE NOCASE, id"
-    return [dict(row) for row in connection.execute(query).fetchall()]
+    rows = FinanceRepository(connection).list_accounts(include_inactive)
+    return [dict(row) for row in rows]
 
 
 @router.get("/accounts/{account_id}")
 def get_account(account_id: str, connection: sqlite3.Connection = Depends(get_connection)):
-    row = connection.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    row = FinanceRepository(connection).get_account(account_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada")
     return dict(row)
@@ -154,29 +149,24 @@ def get_account(account_id: str, connection: sqlite3.Connection = Depends(get_co
 
 @router.post("/categories", status_code=status.HTTP_201_CREATED)
 def create_category(payload: CategoryCreate, connection: sqlite3.Connection = Depends(get_connection)):
+    repository = FinanceRepository(connection)
     name = _clean_text(payload.name)
     if not name:
         raise HTTPException(status_code=422, detail="El nombre de la categoría no puede estar vacío")
     if payload.parent_id:
-        parent = connection.execute(
-            "SELECT category_type FROM categories WHERE id = ? AND is_active = 1",
-            (payload.parent_id,),
-        ).fetchone()
+        parent = repository.get_active_category(payload.parent_id)
         if parent is None:
             raise HTTPException(status_code=422, detail="Categoría padre no encontrada o inactiva")
         if parent["category_type"] != payload.category_type:
             raise HTTPException(status_code=422, detail="La categoría padre debe ser del mismo tipo")
     category_id = str(uuid4())
     try:
-        connection.execute(
-            "INSERT INTO categories (id, name, category_type, parent_id) VALUES (?, ?, ?, ?)",
-            (category_id, name, payload.category_type, payload.parent_id),
-        )
+        repository.create_category(category_id, name, payload.category_type, payload.parent_id)
         connection.commit()
     except sqlite3.IntegrityError:
         connection.rollback()
         raise HTTPException(status_code=409, detail="La categoría ya existe o no es válida") from None
-    row = connection.execute("SELECT * FROM categories WHERE id = ?", (category_id,)).fetchone()
+    row = repository.get_category(category_id)
     return dict(row)
 
 
@@ -186,17 +176,8 @@ def list_categories(
     include_inactive: bool = False,
     connection: sqlite3.Connection = Depends(get_connection),
 ):
-    clauses, params = [], []
-    if category_type:
-        clauses.append("category_type = ?")
-        params.append(category_type)
-    if not include_inactive:
-        clauses.append("is_active = 1")
-    query = "SELECT * FROM categories"
-    if clauses:
-        query += " WHERE " + " AND ".join(clauses)
-    query += " ORDER BY category_type, name COLLATE NOCASE, id"
-    return [dict(row) for row in connection.execute(query, params).fetchall()]
+    rows = FinanceRepository(connection).list_categories(category_type, include_inactive)
+    return [dict(row) for row in rows]
 
 
 @router.post("/transactions", status_code=status.HTTP_201_CREATED, response_model=TransactionView)
@@ -204,14 +185,11 @@ def create_transaction(
     payload: TransactionCreate,
     connection: sqlite3.Connection = Depends(get_connection),
 ):
-    account = connection.execute(
-        "SELECT currency_code, is_active FROM accounts WHERE id = ?", (payload.account_id,)
-    ).fetchone()
+    repository = FinanceRepository(connection)
+    account = repository.get_active_account_currency(payload.account_id)
     if account is None or not account["is_active"]:
         raise HTTPException(status_code=422, detail="Cuenta no encontrada o inactiva")
-    currency = connection.execute(
-        "SELECT minor_unit FROM currencies WHERE code = ?", (payload.currency_code,)
-    ).fetchone()
+    currency = repository.get_currency(payload.currency_code)
     if currency is None:
         raise HTTPException(status_code=422, detail="Moneda no soportada")
     if payload.currency_code != account["currency_code"]:
@@ -222,10 +200,7 @@ def create_transaction(
     if payload.transaction_type in ("income", "expense"):
         if payload.category_id is None:
             raise HTTPException(status_code=422, detail="Ingresos y gastos requieren categoría")
-        category = connection.execute(
-            "SELECT category_type FROM categories WHERE id = ? AND is_active = 1",
-            (payload.category_id,),
-        ).fetchone()
+        category = repository.get_active_category(payload.category_id)
         if category is None or category["category_type"] != payload.transaction_type:
             raise HTTPException(status_code=422, detail="Categoría no válida para el tipo de transacción")
     elif payload.category_id is not None:
@@ -234,18 +209,20 @@ def create_transaction(
     amount_minor = _minor_amount(payload.amount, currency["minor_unit"])
     transaction_id = str(uuid4())
     occurred_at = _iso_datetime(payload.occurred_at)
+    description = _clean_text(payload.description) or None if payload.description else None
+    source = _clean_text(payload.source)
     try:
-        connection.execute(
-            """INSERT INTO transactions
-               (id, account_id, category_id, transaction_type, amount_minor,
-                currency_code, description, occurred_at, source, external_reference)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                transaction_id, payload.account_id, payload.category_id,
-                payload.transaction_type, amount_minor, payload.currency_code,
-                _clean_text(payload.description) or None if payload.description else None,
-                occurred_at, _clean_text(payload.source), payload.external_reference,
-            ),
+        repository.create_transaction(
+            transaction_id,
+            payload.account_id,
+            payload.category_id,
+            payload.transaction_type,
+            amount_minor,
+            payload.currency_code,
+            description,
+            occurred_at,
+            source,
+            payload.external_reference,
         )
         connection.commit()
     except sqlite3.IntegrityError:
@@ -261,9 +238,9 @@ def create_transaction(
         "transaction_type": payload.transaction_type,
         "amount": str(payload.amount),
         "currency_code": payload.currency_code,
-        "description": payload.description,
+        "description": description,
         "occurred_at": occurred_at,
-        "source": payload.source,
+        "source": source,
     }
 
 
@@ -277,29 +254,16 @@ def list_transactions(
     offset: int = Query(default=0, ge=0),
     connection: sqlite3.Connection = Depends(get_connection),
 ):
-    clauses, params = [], []
-    if account_id:
-        clauses.append("account_id = ?")
-        params.append(account_id)
-    if transaction_type:
-        clauses.append("transaction_type = ?")
-        params.append(transaction_type)
-    if date_from:
-        clauses.append("occurred_at >= ?")
-        params.append(_iso_datetime(date_from))
-    if date_to:
-        clauses.append("occurred_at <= ?")
-        params.append(_iso_datetime(date_to))
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from no puede ser posterior a date_to")
-    where = " WHERE " + " AND ".join(clauses) if clauses else ""
-    rows = connection.execute(
-        """SELECT id, account_id, category_id, transaction_type, amount_minor,
-                  currency_code, description, occurred_at, source
-           FROM transactions""" + where +
-        " ORDER BY occurred_at DESC, id LIMIT ? OFFSET ?",
-        [*params, limit, offset],
-    ).fetchall()
+    rows = FinanceRepository(connection).list_transactions(
+        account_id=account_id,
+        transaction_type=transaction_type,
+        occurred_at_from=_iso_datetime(date_from) if date_from else None,
+        occurred_at_to=_iso_datetime(date_to) if date_to else None,
+        limit=limit,
+        offset=offset,
+    )
     return [
         {
             "id": row["id"],

@@ -14,8 +14,10 @@ from pydantic import BaseModel, Field
 
 try:
     from backend.api.finance import _minor_amount, get_connection
+    from backend.repositories.finance_repository import FinanceRepository
 except ImportError:  # Support uvicorn with backend/ as the app directory.
     from api.finance import _minor_amount, get_connection
+    from repositories.finance_repository import FinanceRepository
 
 
 router = APIRouter(prefix="/api/finance", tags=["personal-finance"])
@@ -43,33 +45,23 @@ def create_monthly_budget(
     payload: MonthlyBudgetCreate,
     connection: sqlite3.Connection = Depends(get_connection),
 ):
-    category = connection.execute(
-        "SELECT category_type, is_active FROM categories WHERE id = ?",
-        (payload.category_id,),
-    ).fetchone()
+    repository = FinanceRepository(connection)
+    category = repository.get_expense_category(payload.category_id)
     if category is None or not category["is_active"]:
         raise HTTPException(status_code=422, detail="Categoría no encontrada o inactiva")
     if category["category_type"] != "expense":
         raise HTTPException(status_code=422, detail="El presupuesto requiere una categoría de gasto")
 
-    currency = connection.execute(
-        "SELECT minor_unit FROM currencies WHERE code = ?",
-        (payload.currency_code,),
-    ).fetchone()
+    currency = repository.get_currency(payload.currency_code)
     if currency is None:
         raise HTTPException(status_code=422, detail="Moneda no soportada")
 
     amount_minor = _minor_amount(payload.amount, currency["minor_unit"])
     budget_id = str(uuid4())
     try:
-        connection.execute(
-            """INSERT INTO monthly_category_budgets
-               (id, category_id, currency_code, budget_year, budget_month, amount_minor)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                budget_id, payload.category_id, payload.currency_code,
-                payload.year, payload.month, amount_minor,
-            ),
+        repository.create_monthly_budget(
+            budget_id, payload.category_id, payload.currency_code,
+            payload.year, payload.month, amount_minor,
         )
         connection.commit()
     except sqlite3.IntegrityError:
@@ -96,25 +88,7 @@ def monthly_budget_progress(
     connection: sqlite3.Connection = Depends(get_connection),
 ):
     start, end = _month_bounds(year, month)
-    rows = connection.execute(
-        """SELECT b.id, b.category_id, c.name AS category_name,
-                  b.currency_code, b.budget_year, b.budget_month, b.amount_minor,
-                  COALESCE(SUM(t.amount_minor), 0) AS spent_minor,
-                  COUNT(t.id) AS expense_count
-           FROM monthly_category_budgets b
-           JOIN categories c ON c.id = b.category_id
-           LEFT JOIN transactions t
-             ON t.category_id = b.category_id
-            AND t.currency_code = b.currency_code
-            AND t.transaction_type = 'expense'
-            AND t.occurred_at >= ?
-            AND t.occurred_at < ?
-           WHERE b.budget_year = ? AND b.budget_month = ?
-           GROUP BY b.id, b.category_id, c.name, b.currency_code,
-                    b.budget_year, b.budget_month, b.amount_minor
-           ORDER BY b.currency_code, c.name COLLATE NOCASE, b.id""",
-        (start, end, year, month),
-    ).fetchall()
+    rows = FinanceRepository(connection).monthly_budget_progress(year, month, start, end)
 
     budgets = []
     for row in rows:
