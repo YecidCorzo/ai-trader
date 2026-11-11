@@ -4,12 +4,14 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 
 try:
     from backend.api.finance import get_connection
+    from backend.repositories.finance_repository import FinanceRepository
 except ImportError:  # Support uvicorn with backend/ as the app directory.
     from api.finance import get_connection
+    from repositories.finance_repository import FinanceRepository
 
 
 router = APIRouter(prefix="/api/finance/reports", tags=["personal-finance"])
@@ -36,41 +38,9 @@ def cash_flow_report(
     if start and end and start > end:
         raise HTTPException(status_code=422, detail="date_from no puede ser posterior a date_to")
 
-    clauses = ["transaction_type IN ('income', 'expense')"]
-    params: list[str] = []
-    if start:
-        clauses.append("occurred_at >= ?")
-        params.append(start)
-    if end:
-        clauses.append("occurred_at <= ?")
-        params.append(end)
-    if account_id:
-        clauses.append("account_id = ?")
-        params.append(account_id)
-    where = " WHERE " + " AND ".join(clauses)
-
-    totals = connection.execute(
-        """SELECT currency_code,
-                  SUM(CASE WHEN transaction_type = 'income' THEN amount_minor ELSE 0 END) AS income_minor,
-                  SUM(CASE WHEN transaction_type = 'expense' THEN amount_minor ELSE 0 END) AS expense_minor,
-                  COUNT(*) AS transaction_count
-           FROM transactions""" + where + " GROUP BY currency_code ORDER BY currency_code",
-        params,
-    ).fetchall()
-
-    expenses = connection.execute(
-        """SELECT t.currency_code, t.category_id, c.name AS category_name,
-                  SUM(t.amount_minor) AS expense_minor, COUNT(*) AS transaction_count
-           FROM transactions t
-           LEFT JOIN categories c ON c.id = t.category_id
-           WHERE t.transaction_type = 'expense'"""
-        + (" AND " + " AND ".join(
-            clause.replace("occurred_at", "t.occurred_at").replace("account_id", "t.account_id")
-            for clause in clauses[1:]
-        ) if len(clauses) > 1 else "")
-        + " GROUP BY t.currency_code, t.category_id, c.name ORDER BY t.currency_code, expense_minor DESC",
-        params,
-    ).fetchall()
+    repository = FinanceRepository(connection)
+    totals = repository.cash_flow_totals(start, end, account_id)
+    expenses = repository.expenses_by_category(start, end, account_id)
 
     return {
         "period": {"date_from": start, "date_to": end},
