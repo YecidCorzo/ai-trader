@@ -65,7 +65,12 @@ CREATE TABLE transaction_valuations (
     base_currency_code TEXT NOT NULL DEFAULT 'SEK'
         REFERENCES currencies(code) ON UPDATE RESTRICT ON DELETE RESTRICT,
     value_minor INTEGER NOT NULL CHECK (value_minor >= 0),
-    fx_rate TEXT NOT NULL CHECK (length(trim(fx_rate)) > 0),
+    fx_rate TEXT NOT NULL CHECK (
+        fx_rate NOT GLOB '*[^0-9.]*'
+        AND fx_rate GLOB '[0-9]*'
+        AND (length(fx_rate) - length(replace(fx_rate, '.', ''))) <= 1
+        AND CAST(fx_rate AS NUMERIC) > 0
+    ),
     rate_convention TEXT NOT NULL DEFAULT 'base_per_unit'
         CHECK (rate_convention = 'base_per_unit'),
     provider TEXT NOT NULL CHECK (length(trim(provider)) > 0),
