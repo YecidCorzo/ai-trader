@@ -1,3 +1,4 @@
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -123,6 +124,59 @@ class DatabaseMigrationTests(unittest.TestCase):
                     ).fetchone()[0],
                     0,
                 )
+            finally:
+                connection.close()
+
+    def test_immutable_audit_migration_preserves_existing_events_and_is_idempotent(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        migrations_dir = repository_root / "backend" / "infrastructure" / "migrations"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            legacy_dir = Path(temporary) / "legacy_migrations"
+            legacy_dir.mkdir()
+            for version in range(1, 5):
+                source = next(migrations_dir.glob(f"{version:04d}_*.sql"))
+                shutil.copyfile(source, legacy_dir / source.name)
+
+            connection = connect_database(":memory:")
+            try:
+                self.assertEqual(
+                    apply_migrations(connection, legacy_dir),
+                    ["0001", "0002", "0003", "0004"],
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO paper_trade_events
+                        (id, trade_id, event_type, details_json, occurred_at)
+                    VALUES (?, NULL, 'CIRCUIT_BREAKER_HALTED', ?, ?)
+                    """,
+                    [
+                        ("legacy-event-1", '{"reason":"first"}', "2026-11-11T10:00:00Z"),
+                        ("legacy-event-2", '{"reason":"second"}', "2026-11-11T10:00:00Z"),
+                    ],
+                )
+                connection.commit()
+
+                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005"])
+                rows = connection.execute(
+                    """
+                    SELECT sequence, id, details_json
+                    FROM paper_trade_events
+                    ORDER BY sequence
+                    """
+                ).fetchall()
+                self.assertEqual(
+                    [(row["id"], row["details_json"]) for row in rows],
+                    [
+                        ("legacy-event-1", '{"reason":"first"}'),
+                        ("legacy-event-2", '{"reason":"second"}'),
+                    ],
+                )
+                self.assertEqual([row["sequence"] for row in rows], [1, 2])
+                self.assertEqual(
+                    connection.execute("PRAGMA foreign_key_check").fetchall(), []
+                )
+                self.assertEqual(apply_migrations(connection, migrations_dir), [])
             finally:
                 connection.close()
 
