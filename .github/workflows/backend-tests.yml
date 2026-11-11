@@ -9,15 +9,13 @@ on:
       - "platform/**"
       - "finance/**"
       - "trading/**"
+      - "security/**"
+      - "ci/**"
   pull_request:
-    branches:
-      - main
-      - "feature/**"
-      - "fix/**"
-      - "integration/**"
-      - "platform/**"
-      - "finance/**"
-      - "trading/**"
+    # Run on every PR base branch, including stacked security/CI branches.
+    # Restricting this to main and selected feature prefixes silently skipped
+    # PRs whose base was another short-lived branch.
+  workflow_dispatch:
 
 jobs:
   unit-tests:
