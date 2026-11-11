@@ -109,6 +109,7 @@ class FinanceSchemaTests(unittest.TestCase):
                VALUES ('txn-eur', 'account-1', 'expense', 1000, 'EUR',
                        '2026-11-11T10:00:00Z')"""
         )
+        self.connection.commit()
         for invalid_rate in ('', '0', '-1.25', 'abc', '1.2.3'):
             with self.subTest(fx_rate=invalid_rate):
                 with self.assertRaises(sqlite3.IntegrityError):
