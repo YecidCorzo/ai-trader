@@ -80,9 +80,14 @@ class MonthlyBudgetTests(unittest.TestCase):
 
     def test_excludes_other_months_and_other_categories(self):
         self.create_budget()
+        rent_id = create_category(
+            CategoryCreate(name="Rent", category_type="expense"), self.connection
+        )["id"]
         self.add_expense("10.00", datetime(2026, 10, 31, 23, 59, tzinfo=timezone.utc))
         self.add_expense("20.00", datetime(2026, 11, 2, tzinfo=timezone.utc), category_id=self.food_id)
+        self.add_expense("99.00", datetime(2026, 11, 3, tzinfo=timezone.utc), category_id=rent_id)
         result = monthly_budget_progress(2026, 11, self.connection)
+        self.assertEqual(len(result["budgets"]), 1)
         self.assertEqual(result["budgets"][0]["spent_minor"], 2000)
 
     def test_rejects_income_category(self):
