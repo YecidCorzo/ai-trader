@@ -119,6 +119,78 @@ class PaperTradingControlsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             RiskLimits(max_open_positions=0)
 
+    def test_open_rolls_back_trade_when_audit_event_insert_fails(self):
+        self.connection.execute("""
+            CREATE TRIGGER fail_open_event
+            BEFORE INSERT ON paper_trade_events
+            WHEN NEW.event_type = 'TRADE_OPENED'
+            BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+        """)
+        with self.assertRaises(Exception):
+            self.ledger.open_trade(
+                symbol="SOLUSDT", strategy="test", side="LONG",
+                quantity="1", entry_price="10",
+            )
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM paper_trade_events").fetchone()[0],
+            0,
+        )
+
+    def test_close_rolls_back_status_when_audit_event_insert_fails(self):
+        trade = self.ledger.open_trade(
+            symbol="SOLUSDT", strategy="test", side="LONG",
+            quantity="1", entry_price="10",
+        )
+        self.connection.execute("""
+            CREATE TRIGGER fail_close_event
+            BEFORE INSERT ON paper_trade_events
+            WHEN NEW.event_type = 'TRADE_CLOSED'
+            BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+        """)
+        with self.assertRaises(Exception):
+            self.ledger.close_trade(trade["id"], exit_price="11")
+        stored = self.ledger.get_trade(trade["id"])
+        self.assertEqual(stored["status"], "OPEN")
+        self.assertIsNone(stored["closed_at"])
+        events = self.ledger._repository.list_events(trade["id"])
+        self.assertEqual([event["event_type"] for event in events], ["TRADE_OPENED"])
+
+    def test_invalid_quantity_price_and_fees_are_rejected_without_writes(self):
+        invalid_cases = [
+            {"quantity": "0", "entry_price": "10", "entry_fee": "0"},
+            {"quantity": "-1", "entry_price": "10", "entry_fee": "0"},
+            {"quantity": "1", "entry_price": "NaN", "entry_fee": "0"},
+            {"quantity": "1", "entry_price": "10", "entry_fee": "-0.01"},
+            {"quantity": "1", "entry_price": "10", "entry_fee": "Infinity"},
+        ]
+        for values in invalid_cases:
+            with self.subTest(values=values):
+                with self.assertRaises(ValueError):
+                    self.ledger.open_trade(
+                        symbol="SOLUSDT", strategy="test", side="LONG", **values
+                    )
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0],
+            0,
+        )
+
+    def test_invalid_exit_price_and_fee_leave_open_trade_unchanged(self):
+        trade = self.ledger.open_trade(
+            symbol="SOLUSDT", strategy="test", side="LONG",
+            quantity="1", entry_price="10",
+        )
+        for price, fee in [("0", "0"), ("NaN", "0"), ("11", "-1"), ("11", "Infinity")]:
+            with self.subTest(price=price, fee=fee):
+                with self.assertRaises(ValueError):
+                    self.ledger.close_trade(
+                        trade["id"], exit_price=price, exit_fee=fee
+                    )
+        self.assertEqual(self.ledger.get_trade(trade["id"])["status"], "OPEN")
+
 
 if __name__ == "__main__":
     unittest.main()
