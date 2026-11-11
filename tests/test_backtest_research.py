@@ -26,6 +26,10 @@ class WalkForwardResearchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             chronological_walk_forward_splits([1, 2, 3], 2, 2, 2)
 
+    def test_rejects_single_candle_test_window(self):
+        with self.assertRaisesRegex(ValueError, "al menos 2"):
+            chronological_walk_forward_splits(list(range(20)), 8, 3, 1)
+
     def test_rejects_invalid_window_sizes(self):
         with self.assertRaises(ValueError):
             chronological_walk_forward_splits(list(range(20)), 0, 2, 2)
