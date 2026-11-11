@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.platform.database import (
+from backend.infrastructure.database import (
     apply_migrations,
     connect_database,
     migrate_database,
