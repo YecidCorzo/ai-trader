@@ -10,7 +10,10 @@ import sqlite3
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from backend.repositories.paper_trading_repository import PaperTradingRepository
+try:
+    from backend.repositories.paper_trading_repository import PaperTradingRepository
+except ImportError:  # Support uvicorn with backend/ as the app directory.
+    from repositories.paper_trading_repository import PaperTradingRepository
 
 
 def _utc_now() -> str:
