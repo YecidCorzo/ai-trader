@@ -166,13 +166,8 @@ def create_category(payload: CategoryCreate, connection: sqlite3.Connection = De
     except sqlite3.IntegrityError:
         connection.rollback()
         raise HTTPException(status_code=409, detail="La categoría ya existe o no es válida") from None
-    row = repository.get_active_category(category_id)
-    return {
-        "id": category_id,
-        "name": name,
-        "category_type": row["category_type"],
-        "parent_id": payload.parent_id,
-    }
+    row = repository.get_category(category_id)
+    return dict(row)
 
 
 @router.get("/categories")
