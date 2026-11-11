@@ -1,6 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import logging
 
@@ -39,12 +38,9 @@ def initialize_platform_database():
     initialize_finance_database()
 market_service = MarketService("SOLUSDT")
 strategy = EmaRsiStrategy()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# The dashboard is served by this API, so same-origin requests need no CORS.
+# Keep cross-origin access disabled until an explicit, reviewed origin allowlist
+# and an authenticated deployment model are introduced.
 
 @app.get("/")
 def root():
