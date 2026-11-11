@@ -135,7 +135,7 @@ class PaperExecutionGateTests(unittest.TestCase):
                     consecutive_losses=0,
                 ),
             )
-        self.assertEqual(raised.exception.reason, "daily_loss_limit_reached")
+        self.assertEqual(raised.exception.reason, "consecutive_loss_limit_reached")
 
     def test_concurrent_entries_serialize_and_only_one_position_is_open(self):
         with tempfile.TemporaryDirectory() as directory:
