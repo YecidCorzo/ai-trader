@@ -101,7 +101,7 @@ class FinanceSchemaTests(unittest.TestCase):
              "2026-11-11T10:00:00Z", "2026-11-11T10:01:00Z"),
         )
 
-    def test_valuation_rejects_non_positive_fx_rate_text(self):
+    def test_valuation_rejects_empty_fx_rate_text(self):
         self.create_account(currency="EUR")
         self.connection.execute(
             """INSERT INTO transactions
