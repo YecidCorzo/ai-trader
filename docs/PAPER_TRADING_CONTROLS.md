@@ -44,7 +44,11 @@ PaperExecutionService overrides planned loss, open-position count, daily realize
 P&L, daily trade count, consecutive-loss count and circuit-breaker state using
 the persisted ledger while holding a SQLite write lock. Consecutive-loss ordering
 uses a durable AUTOINCREMENT sequence on append-only close audit events, not
-second-precision timestamps, mutable rowids, or random trade IDs. The caller still supplies equity: this version
+second-precision timestamps, mutable rowids, or random trade IDs. During the
+0005 migration, legacy events are sequenced using their then-current rowid order;
+if a legacy database was VACUUMed before migration, the original order of tied
+second-level timestamps cannot be reconstructed. The caller still supplies equity:
+this version
 has no persisted paper-account capital/equity source, so that value is not
 independently verified by the service. Do not use arbitrary or stale equity
 values. A risk decision is a gate only; it never submits an order.
