@@ -75,6 +75,29 @@ class FinanceRepositoryTests(unittest.TestCase):
         self.assertEqual(expenses[0]["category_name"], "Food")
         self.assertEqual(expenses[0]["expense_minor"], 2500)
 
+    def test_filter_values_are_bound_parameters_not_sql_fragments(self):
+        self.repository.create_account(
+            "account-safe", "Safe", "bank", "SEK", None
+        )
+        self.repository.create_category(
+            "category-safe", "Food", "expense", None
+        )
+        self.repository.create_transaction(
+            "transaction-safe", "account-safe", "category-safe", "expense",
+            100, "SEK", None, "2026-11-05T12:00:00Z", "manual", None,
+        )
+        self.connection.commit()
+
+        injected = self.repository.list_transactions(
+            account_id="' OR 1=1 --",
+            transaction_type="expense",
+        )
+        self.assertEqual(injected, [])
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
