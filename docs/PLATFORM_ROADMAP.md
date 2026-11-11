@@ -223,3 +223,31 @@ These are internal research gates, not guarantees and not financial advice. Pass
 - The current backtest route fetches up to 5,000 closed 5-minute candles. This is only about 17 days of data at full coverage and is inadequate for robust multi-regime conclusions.
 - The advanced strategy's rule score is not a calibrated win probability and is not evidence of positive expectancy.
 - No strategy is currently certified profitable. Keep PAPER MODE mandatory.
+
+
+## Implementation log — 2026-11-11 (infrastructure foundation in review)
+
+### PR #29 — runtime and CI baseline
+- Adds a pinned root runtime dependency manifest for FastAPI, Requests and Uvicorn.
+- CI installs the manifest, runs `pip check`, and executes the standard-library unittest suite.
+- Adds app smoke tests for health-route registration and PAPER mode.
+- Adds deterministic mocked market-data contract tests for pagination, closed-candle filtering, request parameters/timeouts and HTTP error propagation.
+- Latest recorded CI run #209 passed.
+
+### PR #30 — SQLite persistence foundation (stacked on PR #29)
+- Adds explicit SQLite connection setup, environment/explicit database path resolution, foreign-key enforcement and busy timeout.
+- Adds ordered, versioned SQL migrations with one transaction per migration, idempotent re-runs and rollback on failure.
+- Adds tests for connection settings, migration order, repeat execution, invalid names and rollback.
+- Ignores local database files and the default `data/` directory to prevent accidental commits of personal financial records.
+- Adds Python compile checks to CI.
+- An initial CI run exposed a namespace collision when the package was named `backend/platform`; it was renamed to `backend/infrastructure`. The corrected latest CI run #220 passed.
+- No financial tables, account endpoints or live trading capability have been added yet. This PR is the persistence engine foundation only.
+
+### Integration order and next gates
+1. Review and merge PR #29 into `main`.
+2. Retarget/review PR #30 against the updated `main`, then merge only after its CI is green.
+3. Add the first versioned finance schema with original currency preservation, SEK reporting valuations, source/rate provenance and decimal-safe amounts.
+4. Add repository/service boundaries and API contracts for accounts and transactions.
+5. Add database-backed integration tests and verify the existing trading endpoints remain unchanged.
+
+PAPER MODE remains mandatory. No real orders, bank credentials or exchange trading credentials are part of this infrastructure work.
