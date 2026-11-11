@@ -266,6 +266,11 @@ def run_walk_forward(
     allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
     if interval not in allowed_intervals:
         raise HTTPException(status_code=400, detail="Intervalo no soportado")
+    if test_size < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="test_size debe ser al menos 2 para calcular Buy & Hold",
+        )
     if step_size < test_size:
         raise HTTPException(
             status_code=400,
