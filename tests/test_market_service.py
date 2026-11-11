@@ -76,6 +76,44 @@ class MarketServicePaginationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MarketService().get_candles(limit=0)
 
+    def test_closed_only_requests_one_extra_candle_and_excludes_forming_kline(self):
+        from unittest.mock import Mock, patch
+        from services.market_services import MarketService
+
+        rows = [
+            [1, "100", "102", "99", "101", "10", 999],
+            [2, "101", "103", "100", "102", "11", 1000],
+            [3, "102", "104", "101", "103", "12", 1100],
+        ]
+        response = Mock()
+        response.json.return_value = rows
+        response.raise_for_status.return_value = None
+
+        with patch("services.market_services.requests.get", return_value=response) as get:
+            with patch("time.time", return_value=1.001):
+                result = MarketService("SOLUSDT").get_candles(
+                    interval="5m", limit=2, closed_only=True
+                )
+
+        self.assertEqual([row[0] for row in result], [1, 2])
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(get.call_args.kwargs["params"]["limit"], 3)
+        self.assertEqual(get.call_args.kwargs["params"]["symbol"], "SOLUSDT")
+        self.assertEqual(get.call_args.kwargs["params"]["interval"], "5m")
+        self.assertEqual(get.call_args.kwargs["timeout"], 10)
+
+    def test_http_errors_are_propagated_to_the_api_layer(self):
+        from unittest.mock import Mock, patch
+        import requests
+        from services.market_services import MarketService
+
+        response = Mock()
+        response.raise_for_status.side_effect = requests.HTTPError("rate limited")
+
+        with patch("services.market_services.requests.get", return_value=response):
+            with self.assertRaisesRegex(requests.HTTPError, "rate limited"):
+                MarketService().get_candles(limit=10)
+
 
 
 if __name__ == "__main__":
