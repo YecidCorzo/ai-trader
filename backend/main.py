@@ -16,6 +16,7 @@ from strategies.advanced_strategy import AdvancedStrategy
 from services.backtest_service import BacktestService
 from services.backtest_review import review_backtest
 from services.backtest_research import run_walk_forward_backtests
+from api.finance import router as finance_router, initialize_finance_database
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,12 @@ def _internal_server_error(operation):
 
 
 app = FastAPI(title="AI Trader API")
+app.include_router(finance_router)
+
+
+@app.on_event("startup")
+def initialize_platform_database():
+    initialize_finance_database()
 market_service = MarketService("SOLUSDT")
 strategy = EmaRsiStrategy()
 app.add_middleware(
