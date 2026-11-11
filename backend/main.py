@@ -259,7 +259,7 @@ def run_walk_forward(
     interval: str = Query("1d"),
     train_size: int = Query(5000, ge=30, le=90000),
     validation_size: int = Query(1000, ge=1, le=50000),
-    test_size: int = Query(1000, ge=1, le=50000),
+    test_size: int = Query(1000, ge=2, le=50000),
     step_size: int = Query(1000, ge=1, le=50000),
 ):
     """Run fixed-parameter chronological out-of-sample tests in PAPER mode."""
