@@ -17,7 +17,7 @@ ledger = TradeLedger(connection)
 - Opening and closing prices, quantities and fees are stored as decimal strings.
 - Realized P&L is calculated with `Decimal`, including entry and exit fees.
 - LONG and SHORT calculations are supported.
-- Opening and closing actions produce immutable audit events.
+- Opening and closing actions produce append-only audit events. SQLite triggers reject event updates and deletes; each event receives an AUTOINCREMENT sequence.
 - A closed trade cannot be closed a second time.
 - The ledger records simulated fills supplied by a caller; it does not create fills or send orders.
 
@@ -43,8 +43,8 @@ The standalone RiskEngine accepts a RiskSnapshot supplied by its caller. The
 PaperExecutionService overrides planned loss, open-position count, daily realized
 P&L, daily trade count, consecutive-loss count and circuit-breaker state using
 the persisted ledger while holding a SQLite write lock. Consecutive-loss ordering
-uses the insertion order of immutable close audit events, not second-precision
-timestamps or random trade IDs. The caller still supplies equity: this version
+uses a durable AUTOINCREMENT sequence on append-only close audit events, not
+second-precision timestamps, mutable rowids, or random trade IDs. The caller still supplies equity: this version
 has no persisted paper-account capital/equity source, so that value is not
 independently verified by the service. Do not use arbitrary or stale equity
 values. A risk decision is a gate only; it never submits an order.
