@@ -42,10 +42,12 @@ Default conservative limits:
 The standalone RiskEngine accepts a RiskSnapshot supplied by its caller. The
 PaperExecutionService overrides planned loss, open-position count, daily realized
 P&L, daily trade count, consecutive-loss count and circuit-breaker state using
-the persisted ledger while holding a SQLite write lock. The caller still supplies
-equity: this version has no persisted paper-account capital/equity source, so that
-value is not independently verified by the service. Do not use arbitrary or stale
-equity values. A risk decision is a gate only; it never submits an order.
+the persisted ledger while holding a SQLite write lock. Consecutive-loss ordering
+uses the insertion order of immutable close audit events, not second-precision
+timestamps or random trade IDs. The caller still supplies equity: this version
+has no persisted paper-account capital/equity source, so that value is not
+independently verified by the service. Do not use arbitrary or stale equity
+values. A risk decision is a gate only; it never submits an order.
 
 ## Circuit breaker
 

@@ -124,10 +124,18 @@ class PaperTradingRepository:
             (Decimal(row["realized_pnl"]) for row in closed_today),
             Decimal("0"),
         )
+        # Timestamps have second-level precision and can tie for rapid closes.
+        # The append-only audit event rowid preserves the actual close insertion
+        # order; random trade IDs must never decide a consecutive-loss streak.
         recent_closed = self._all(
-            """SELECT realized_pnl FROM paper_trades
-               WHERE status = 'CLOSED'
-               ORDER BY closed_at DESC, id DESC LIMIT ?""",
+            """SELECT trade.realized_pnl
+               FROM paper_trades AS trade
+               JOIN paper_trade_events AS event
+                 ON event.trade_id = trade.id
+                AND event.event_type = 'TRADE_CLOSED'
+               WHERE trade.status = 'CLOSED'
+               ORDER BY event.rowid DESC
+               LIMIT ?""",
             (loss_streak_limit,),
         )
         consecutive_losses = 0

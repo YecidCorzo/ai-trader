@@ -1,6 +1,8 @@
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
+from unittest.mock import patch
+from uuid import UUID
 
 from backend.infrastructure.database import apply_migrations, connect_database
 from backend.services.circuit_breaker import CircuitBreaker
@@ -45,7 +47,7 @@ class PaperTradingControlsTests(unittest.TestCase):
 
     def test_short_trade_calculates_profit_and_loss_direction_correctly(self):
         opened = self.ledger.open_trade(
-            symbol="SOLUSDT", strategy="ema-rsi", side="SHORT",
+            symbol="SOLUSDT", strategy="test", side="SHORT",
             quantity="3", entry_price="100", entry_fee="0.5",
         )
         closed = self.ledger.close_trade(
@@ -190,6 +192,41 @@ class PaperTradingControlsTests(unittest.TestCase):
                         trade["id"], exit_price=price, exit_fee=fee
                     )
         self.assertEqual(self.ledger.get_trade(trade["id"])["status"], "OPEN")
+
+    def test_consecutive_losses_follow_close_event_order_when_timestamps_tie(self):
+        same_close_time = datetime(2026, 11, 11, 10, tzinfo=timezone.utc)
+        deterministic_ids = [
+            UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),  # Earlier losing trade ID.
+            UUID("11111111-1111-1111-1111-111111111111"),
+            UUID("22222222-2222-2222-2222-222222222222"),
+            UUID("00000000-0000-0000-0000-000000000000"),  # Later winning trade ID.
+            UUID("33333333-3333-3333-3333-333333333333"),
+            UUID("44444444-4444-4444-4444-444444444444"),
+        ]
+        with patch("backend.services.trade_ledger.uuid4", side_effect=deterministic_ids):
+            losing = self.ledger.open_trade(
+                symbol="SOLUSDT", strategy="test", side="LONG",
+                quantity="1", entry_price="10",
+                opened_at=datetime(2026, 11, 11, 9, tzinfo=timezone.utc),
+            )
+            self.ledger.close_trade(
+                losing["id"], exit_price="9", closed_at=same_close_time
+            )
+            winning = self.ledger.open_trade(
+                symbol="BTCUSDT", strategy="test", side="LONG",
+                quantity="1", entry_price="10",
+                opened_at=datetime(2026, 11, 11, 9, tzinfo=timezone.utc),
+            )
+            self.ledger.close_trade(
+                winning["id"], exit_price="11", closed_at=same_close_time
+            )
+
+        metrics = self.ledger._repository.risk_metrics(
+            day_start="2026-11-11T00:00:00Z",
+            day_end="2026-11-12T00:00:00Z",
+            loss_streak_limit=3,
+        )
+        self.assertEqual(metrics["consecutive_losses"], 0)
 
 
 if __name__ == "__main__":
