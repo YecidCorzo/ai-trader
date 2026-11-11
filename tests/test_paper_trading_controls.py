@@ -1,3 +1,4 @@
+import sqlite3
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -221,12 +222,40 @@ class PaperTradingControlsTests(unittest.TestCase):
                 winning["id"], exit_price="11", closed_at=same_close_time
             )
 
+        self.connection.execute("VACUUM")
         metrics = self.ledger._repository.risk_metrics(
             day_start="2026-11-11T00:00:00Z",
             day_end="2026-11-12T00:00:00Z",
             loss_streak_limit=3,
         )
         self.assertEqual(metrics["consecutive_losses"], 0)
+
+    def test_audit_events_reject_updates_and_deletes(self):
+        trade = self.ledger.open_trade(
+            symbol="SOLUSDT", strategy="test", side="LONG",
+            quantity="1", entry_price="10",
+        )
+        event = self.connection.execute(
+            "SELECT id, details_json FROM paper_trade_events WHERE trade_id = ?",
+            (trade["id"],),
+        ).fetchone()
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                "UPDATE paper_trade_events SET details_json = '{}' WHERE id = ?",
+                (event["id"],),
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                "DELETE FROM paper_trade_events WHERE id = ?",
+                (event["id"],),
+            )
+
+        stored = self.connection.execute(
+            "SELECT details_json FROM paper_trade_events WHERE id = ?",
+            (event["id"],),
+        ).fetchone()
+        self.assertEqual(stored["details_json"], event["details_json"])
 
 
 if __name__ == "__main__":
