@@ -1,0 +1,5 @@
+# Direct runtime dependencies for the FastAPI backend.
+# Keep exact versions here so local Mac setup and CI use the same releases.
+fastapi==0.162.3
+requests==2.34.2
+uvicorn==0.54.0
