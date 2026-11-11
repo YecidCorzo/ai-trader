@@ -92,11 +92,11 @@ class PaperTradingRepository:
     def list_events(self, trade_id: str | None = None) -> list[sqlite3.Row]:
         if trade_id is None:
             return self._all(
-                "SELECT * FROM paper_trade_events ORDER BY occurred_at, id"
+                "SELECT * FROM paper_trade_events ORDER BY sequence"
             )
         return self._all(
             """SELECT * FROM paper_trade_events
-               WHERE trade_id = ? ORDER BY occurred_at, id""",
+               WHERE trade_id = ? ORDER BY sequence""",
             (trade_id,),
         )
 
@@ -124,9 +124,7 @@ class PaperTradingRepository:
             (Decimal(row["realized_pnl"]) for row in closed_today),
             Decimal("0"),
         )
-        # Timestamps have second-level precision and can tie for rapid closes.
-        # The append-only audit event rowid preserves the actual close insertion
-        # order; random trade IDs must never decide a consecutive-loss streak.
+        # A dedicated AUTOINCREMENT key is stable across VACUUM and tied timestamps.
         recent_closed = self._all(
             """SELECT trade.realized_pnl
                FROM paper_trades AS trade
@@ -134,7 +132,7 @@ class PaperTradingRepository:
                  ON event.trade_id = trade.id
                 AND event.event_type = 'TRADE_CLOSED'
                WHERE trade.status = 'CLOSED'
-               ORDER BY event.rowid DESC
+               ORDER BY event.sequence DESC
                LIMIT ?""",
             (loss_streak_limit,),
         )
