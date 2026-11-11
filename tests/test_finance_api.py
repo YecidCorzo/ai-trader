@@ -143,7 +143,7 @@ class FinanceApiTests(unittest.TestCase):
             ),
             self.connection,
         )
-        rows = list_transactions(account_id=account_id, connection=self.connection)
+        rows = list_transactions(account_id=account_id, limit=100, offset=0, connection=self.connection)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["amount_minor"], 1200)
 
