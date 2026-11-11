@@ -18,3 +18,9 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local application data (never commit personal financial records)
+data/
+*.sqlite3
+*.sqlite3-journal
+*.db
