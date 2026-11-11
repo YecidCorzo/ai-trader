@@ -7,6 +7,7 @@ on:
       - "fix/**"
       - "integration/**"
       - "platform/**"
+      - "finance/**"
   pull_request:
     branches:
       - main
