@@ -18,6 +18,7 @@ from services.backtest_research import run_walk_forward_backtests
 from api.finance import router as finance_router, initialize_finance_database
 from api.finance_reports import router as finance_reports_router
 from api.finance_balances import router as finance_balances_router
+from api.finance_budgets import router as finance_budgets_router
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ app = FastAPI(title="AI Trader API")
 app.include_router(finance_router)
 app.include_router(finance_reports_router)
 app.include_router(finance_balances_router)
+app.include_router(finance_budgets_router)
 
 
 @app.on_event("startup")
