@@ -34,3 +34,16 @@ The reporting-currency default is SEK. Valuations are optional because an FX
 rate may be unavailable; callers must not invent a rate or silently assume
 parity. Account balances are derived from transactions in a later application
 service, not stored as a second mutable source of truth in this initial schema.
+
+
+## PAPER trade ledger
+
+Migrations `0004_paper_trading_ledger.sql` and
+`0005_immutable_paper_trade_events.sql` add a simulated trade ledger, persistent
+circuit-breaker state, and append-only audit events with a durable sequence.
+The event migration preserves the order available at migration time. If a
+legacy database was VACUUMed before migration 0005, the original order of
+same-second events cannot be reconstructed reliably.
+
+These tables are separate from personal-finance accounts and transactions.
+They do not represent real funds, bank balances, or exchange balances.
