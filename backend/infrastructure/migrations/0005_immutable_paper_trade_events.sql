@@ -26,6 +26,20 @@ ALTER TABLE paper_trade_events_new RENAME TO paper_trade_events;
 CREATE INDEX idx_paper_trade_events_trade_time
     ON paper_trade_events (trade_id, occurred_at);
 
+-- REPLACE can delete a conflicting row without firing DELETE triggers when
+-- recursive_triggers is OFF. Reject attempts to reuse an existing event key
+-- before SQLite applies REPLACE conflict handling.
+CREATE TRIGGER paper_trade_events_no_replace
+BEFORE INSERT ON paper_trade_events
+WHEN EXISTS (
+    SELECT 1 FROM paper_trade_events
+    WHERE id = NEW.id
+       OR (NEW.sequence > 0 AND sequence = NEW.sequence)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'paper_trade_events is append-only');
+END;
+
 CREATE TRIGGER paper_trade_events_no_update
 BEFORE UPDATE ON paper_trade_events
 BEGIN
