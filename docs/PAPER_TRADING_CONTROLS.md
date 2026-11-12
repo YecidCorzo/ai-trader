@@ -1,57 +1,107 @@
-# Paper trading ledger and risk controls
+# PAPER account, trade ledger and risk controls
 
-This module set records simulated trades only. It does not connect to an exchange
+Everything in this module is simulated. It does not connect to an exchange
 account, submit orders, transfer funds, or enable live trading.
 
-## Trade ledger
+## Explicit PAPER account capital
+
+A PAPER account is separate from personal-finance accounts and bank balances.
+Creating it requires an explicit opening capital, quote currency and
+idempotency key; there is no default balance and no assumed 10,000-unit
+starting amount.
 
 ```python
-from backend.infrastructure.database import connect_database, apply_migrations
-from backend.services.trade_ledger import TradeLedger
+from backend.infrastructure.database import apply_migrations, connect_database
+from backend.services.paper_account import PaperAccountService
 
 connection = connect_database()
 apply_migrations(connection)
-ledger = TradeLedger(connection)
+accounts = PaperAccountService(connection)  # read-only public Binance ticker
+account = accounts.create_account(
+    name="Demo account",
+    quote_currency="USDT",
+    opening_capital="1000",
+    idempotency_key="demo-account-opening-v1",
+)
+print(account["id"])
 ```
 
-- Opening and closing prices, quantities and fees are stored as decimal strings.
-- Realized P&L is calculated with `Decimal`, including entry and exit fees.
-- LONG and SHORT calculations are supported.
-- Opening and closing actions produce append-only audit events. SQLite triggers reject event updates and deletes; each event receives an AUTOINCREMENT sequence.
-- A closed trade cannot be closed a second time.
-- The ledger records simulated fills supplied by a caller; it does not create fills or send orders.
+Opening capital, deposits, withdrawals, adjustments and realized trade P&L are
+stored as append-only account events. Funding events require an idempotency key;
+reusing it with identical data returns the original event, while conflicting
+reuse is rejected. Withdrawals cannot exceed the available account balance.
+All events must use the account's quote currency.
 
-## Risk engine
+Existing PAPER trades from before migration 0006 remain unassigned. They are
+not attached to a new account, and their history is never used to infer or
+invent starting capital.
+
+## Market valuation and equity
+
+The default read-only provider uses Binance's public
+`https://data-api.binance.vision/api/v3/ticker/price` endpoint. It needs no API
+key or exchange credentials. The exchange response does not provide a trusted
+event timestamp, so the application records the local retrieval time; this is
+not represented as an exchange-generated timestamp.
+
+Price snapshots are append-only. The default maximum age is 30 seconds.
+Missing, malformed, future-dated or stale prices for any open position fail
+closed; the service does not silently reuse a stale mark or assume a price.
+The provider can be replaced in tests by an injected provider that returns a
+`PriceQuote` with a source and timezone-aware retrieval timestamp.
+
+Equity is calculated as:
+
+`account event balance + unrealized P&L on open positions - their entry fees`
+
+Realized P&L is posted to the account ledger in the same SQLite transaction as
+the trade-close and audit events. The amount is net of entry and exit fees.
+Position marks use Decimal arithmetic and the stored quote currency; there is
+no implicit FX conversion.
 
 ```python
-from decimal import Decimal
-from backend.services.risk_engine import RiskEngine, RiskSnapshot
+equity = accounts.get_equity(account["id"])
+print(equity)
+```
 
-decision = RiskEngine().evaluate(
-    RiskSnapshot(equity=Decimal("10000"), planned_loss=Decimal("100"))
+## Trade ledger and risk gate
+
+```python
+from backend.services.paper_execution import PaperExecutionService
+
+execution = PaperExecutionService(connection)
+trade = execution.open_position(
+    account_id=account["id"],
+    symbol="SOLUSDT",
+    strategy="ema-rsi",
+    side="LONG",
+    quantity="1",
+    entry_price="100",
+    stop_price="95",
+    entry_fee="0.1",
+    estimated_exit_fee="0.1",
 )
 ```
 
-Default conservative limits:
-- Maximum planned loss per trade: 1% of current equity.
-- Maximum realized daily loss: 3% of current equity.
-- Maximum open positions: 1.
-- Maximum trades per day: 5.
-- Maximum consecutive losses: 3.
+The execution service does not accept caller-supplied equity or a caller-built
+risk snapshot. It derives equity from the selected persisted PAPER account,
+fresh price snapshots, and account-scoped trade history while holding a SQLite
+write lock. Account IDs scope open positions, daily trade counts, realized
+daily P&L and loss streaks. Concurrent entry checks serialize per database;
+a failed risk check creates no trade.
 
-The standalone RiskEngine accepts a RiskSnapshot supplied by its caller. The
-PaperExecutionService overrides planned loss, open-position count, daily realized
-P&L, daily trade count, consecutive-loss count and circuit-breaker state using
-the persisted ledger while holding a SQLite write lock. Consecutive-loss ordering
-uses a durable AUTOINCREMENT sequence on append-only close audit events, not
-second-precision timestamps, mutable rowids, or random trade IDs. During the
-0005 migration, legacy events are sequenced using their then-current rowid order;
-if a legacy database was VACUUMed before migration, the original order of tied
-second-level timestamps cannot be reconstructed. The caller still supplies equity:
-this version
-has no persisted paper-account capital/equity source, so that value is not
-independently verified by the service. Do not use arbitrary or stale equity
-values. A risk decision is a gate only; it never submits an order.
+Default conservative limits:
+- Maximum planned loss per trade: 1% of current account equity.
+- Maximum realized daily loss: 3% of current account equity.
+- Maximum open positions: 1 per PAPER account.
+- Maximum trades per day: 5 per PAPER account.
+- Maximum consecutive losses: 3 per PAPER account.
+
+Opening and closing prices, quantities and fees are stored as decimal strings.
+LONG and SHORT realized P&L is calculated with Decimal. Opening and closing
+actions produce append-only audit events with durable sequence numbers.
+Account events and price snapshots also reject updates, deletes and replacement
+attempts. A closed trade cannot be closed a second time.
 
 ## Circuit breaker
 
@@ -60,24 +110,19 @@ from backend.services.circuit_breaker import CircuitBreaker
 
 breaker = CircuitBreaker(connection)
 breaker.halt("daily loss limit reached", updated_by="operator")
-# Reset is an explicit operator action:
-breaker.reset(confirmed_by="operator")
+breaker.reset(confirmed_by="operator")  # explicit operator action
 ```
 
-The halt state is stored in SQLite and survives application restarts. Reset
-requires a non-empty operator confirmation and writes an audit event. The
-PaperExecutionService reads this state and records an approved simulated entry
-inside the same SQLite write transaction. SQLite's `BEGIN IMMEDIATE` serializes
-competing entry attempts against the same database file. A failed risk check or
-ledger/audit insert must not create a trade.
+The halt state persists in SQLite and reset requires explicit confirmation.
 
-## Current boundary
+## Current security boundary
 
-- Mode is always PAPER.
-- No live execution or exchange trading credentials.
-- No bank integration or movement of money.
-- Equity is still caller-supplied; daily P&L, daily trade count, open positions,
-  consecutive losses and breaker state are read from persisted PAPER records.
-- There is no persisted capital/equity accounting or independent reconciliation
-  of the caller-supplied equity amount.
-- These controls are not a guarantee against loss and are not a live-trading authorization.
+- PAPER only; no real funds, bank integration, exchange credentials or live orders.
+- No HTTP execution/account routes are exposed by this change.
+- Authentication and authorization for multi-user account ownership must be
+  designed and reviewed before any account or execution route is added.
+- A PAPER account is a simulation, not a real exchange wallet or custody balance.
+- Binance retrieval time is a local receive timestamp, not an exchange event time.
+- Stale/unavailable prices block valuation and new entries when open positions
+  need marking; no fallback to stale data is permitted.
+- This is a risk-control gate, not a guarantee against loss or a live-trading authorization.
