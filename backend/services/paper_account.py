@@ -106,6 +106,12 @@ class PaperAccountService:
                    VALUES (?, ?, ?, ?, ?)""",
                 (identifier, name, currency, key, now),
             )
+            self._connection.execute(
+                """INSERT INTO paper_account_risk_controls
+                   (account_id, halted, reason, updated_at, updated_by)
+                   VALUES (?, 0, NULL, ?, 'system')""",
+                (identifier, now),
+            )
             self._insert_event(
                 account_id=identifier, event_type="OPENING_CAPITAL",
                 amount=amount, currency=currency, idempotency_key=key,
