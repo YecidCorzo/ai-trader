@@ -258,5 +258,37 @@ class PaperTradingControlsTests(unittest.TestCase):
         self.assertEqual(stored["details_json"], event["details_json"])
 
 
+    def test_insert_or_replace_cannot_overwrite_audit_event_when_recursive_triggers_off(self):
+        trade = self.ledger.open_trade(
+            symbol="SOLUSDT", strategy="test", side="LONG",
+            quantity="1", entry_price="10",
+        )
+        event = self.connection.execute(
+            """SELECT sequence, id, trade_id, event_type, details_json, occurred_at
+               FROM paper_trade_events WHERE trade_id = ?""",
+            (trade["id"],),
+        ).fetchone()
+
+        self.connection.execute("PRAGMA recursive_triggers = OFF")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                """INSERT OR REPLACE INTO paper_trade_events
+                   (id, trade_id, event_type, details_json, occurred_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    event["id"], event["trade_id"], event["event_type"],
+                    '{"tampered": true}', event["occurred_at"],
+                ),
+            )
+
+        stored = self.connection.execute(
+            """SELECT sequence, details_json FROM paper_trade_events
+               WHERE id = ?""",
+            (event["id"],),
+        ).fetchone()
+        self.assertEqual(stored["sequence"], event["sequence"])
+        self.assertEqual(stored["details_json"], event["details_json"])
+
+
 if __name__ == "__main__":
     unittest.main()
