@@ -177,6 +177,30 @@ class PaperExecutionGateTests(unittest.TestCase):
                 idempotency_key="deposit-1",
             )
 
+    def test_account_events_reject_insert_or_replace_and_currency_mismatch(self):
+        event = self.connection.execute(
+            "SELECT * FROM paper_account_events WHERE account_id = ?",
+            (self.account["id"],),
+        ).fetchone()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                """INSERT OR REPLACE INTO paper_account_events
+                   (id, account_id, event_type, amount, currency_code,
+                    idempotency_key, reference_id, occurred_at)
+                   VALUES (?, ?, 'OPENING_CAPITAL', '999999', 'USDT',
+                           'initial-capital', NULL, ?)""",
+                (event["id"], self.account["id"], event["occurred_at"]),
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                """INSERT INTO paper_account_events
+                   (id, account_id, event_type, amount, currency_code,
+                    idempotency_key, occurred_at)
+                   VALUES ('bad-currency', ?, 'DEPOSIT', '10', 'USD',
+                           'bad-currency', '2026-11-12T00:00:00Z')""",
+                (self.account["id"],),
+            )
+
     def test_withdrawal_cannot_exceed_available_balance(self):
         with self.assertRaises(PaperAccountError):
             self.accounts.record_funding(
