@@ -1,7 +1,10 @@
 import sqlite3
 import unittest
+import shutil
+import tempfile
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -164,6 +167,49 @@ class PaperAccountOwnershipTests(unittest.TestCase):
                 "UPDATE paper_accounts SET owner_issuer = NULL WHERE id = ?",
                 (self.account_a["id"],),
             )
+
+    def test_legacy_unowned_account_is_preserved_but_not_claimed(self):
+        migrations = Path(__file__).resolve().parents[1] / "backend" / "infrastructure" / "migrations"
+        with tempfile.TemporaryDirectory() as directory:
+            legacy_dir = Path(directory) / "legacy_migrations"
+            legacy_dir.mkdir()
+            for migration in sorted(migrations.glob("000[1-6]_*.sql")):
+                shutil.copyfile(migration, legacy_dir / migration.name)
+
+            connection = connect_database(":memory:")
+            try:
+                apply_migrations(connection, legacy_dir)
+                connection.execute(
+                    """INSERT INTO paper_accounts
+                       (id, name, quote_currency, creation_key, created_at)
+                       VALUES ('legacy-account', 'Legacy', 'USDT', 'legacy-key',
+                               '2026-11-01T00:00:00Z')"""
+                )
+                connection.execute(
+                    """INSERT INTO paper_account_risk_controls
+                       (account_id, halted, reason, updated_at, updated_by)
+                       VALUES ('legacy-account', 0, NULL, '2026-11-01T00:00:00Z', 'migration')"""
+                )
+                connection.execute(
+                    """INSERT INTO paper_account_events
+                       (id, account_id, event_type, amount, currency_code,
+                        idempotency_key, occurred_at)
+                       VALUES ('legacy-opening', 'legacy-account', 'OPENING_CAPITAL',
+                               '1000', 'USDT', 'legacy-opening-key',
+                               '2026-11-01T00:00:00Z')"""
+                )
+                connection.commit()
+                apply_migrations(connection, migrations)
+                row = connection.execute(
+                    "SELECT owner_issuer, owner_subject FROM paper_accounts WHERE id = 'legacy-account'"
+                ).fetchone()
+                self.assertIsNone(row["owner_issuer"])
+                self.assertIsNone(row["owner_subject"])
+                authorization = PaperAuthorizationService(connection)
+                with self.assertRaises(PaperResourceNotFoundError):
+                    authorization.require_account(self.owner_a, "legacy-account")
+            finally:
+                connection.close()
 
     def test_trade_authorization_is_scoped_by_trade_account_and_owner(self):
         execution = PaperExecutionService(
