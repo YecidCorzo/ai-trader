@@ -1,7 +1,6 @@
 """Pre-trade gate for simulated entries; no live order-routing capability."""
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -78,12 +77,6 @@ class PaperExecutionService:
         opening_fee = _non_negative_decimal(entry_fee, "entry_fee")
         exit_fee = _non_negative_decimal(estimated_exit_fee, "estimated_exit_fee")
 
-        if side == "LONG" and stop >= entry:
-            raise ValueError("El stop de LONG debe estar por debajo de la entrada")
-        if side == "SHORT" and stop <= entry:
-            raise ValueError("El stop de SHORT debe estar por encima de la entrada")
-
-        planned_loss = abs(entry - stop) * qty + opening_fee + exit_fee
         # Network I/O happens before acquiring SQLite's write lock. The quotes
         # are checked again for age and persisted inside the atomic risk transaction.
         quotes = self._accounts.fetch_open_position_quotes(
@@ -102,6 +95,7 @@ class PaperExecutionService:
             raise ValueError("El stop de LONG debe estar por debajo del precio de mercado")
         if side == "SHORT" and stop <= entry:
             raise ValueError("El stop de SHORT debe estar por encima del precio de mercado")
+        planned_loss = abs(entry - stop) * qty + opening_fee + exit_fee
 
         try:
             self._connection.execute("BEGIN IMMEDIATE")
