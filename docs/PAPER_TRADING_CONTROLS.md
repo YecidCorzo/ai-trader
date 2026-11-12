@@ -127,6 +127,32 @@ explicit confirmation. One account's circuit breaker does not halt another
 account. The legacy global breaker remains available only for older internal
 callers; account-based execution always uses the account-scoped breaker.
 
+## Compatibility and API migration
+
+This release intentionally changes the internal `PaperExecutionService`
+contract. It is a breaking change for callers written against the earlier
+ledger-only service; there is no unsafe compatibility shim for caller-supplied
+fills or risk snapshots.
+
+| Earlier calling pattern | Current contract |
+| --- | --- |
+| Open with a caller-provided entry price or risk snapshot | `open_position(account_id=..., symbol=..., strategy=..., side=..., quantity=..., stop_price=...)`; entry price and equity are derived internally |
+| Close with `close_position(trade_id, exit_price=...)` | `close_position(trade_id, account_id=..., exit_fee=...)`; exit price is obtained from a fresh public market quote |
+| Global circuit-breaker calls | Pass `account_id` to `circuit_breaker_status`, `halt` and `reset_circuit_breaker` |
+
+Before upgrading, update every internal caller and test to supply the PAPER
+account ID. Create that account with explicit opening capital and a stable
+idempotency key. Do not pass an entry/exit price, caller-computed equity or a
+caller-built risk snapshot. If a caller cannot be migrated, it must remain
+disabled rather than fall back to the previous, less-trusted contract.
+
+The canonical trading symbol format is Binance Spot `BASEQUOTE` (for example
+`SOLUSDT`), uppercase ASCII letters/digits with no slash, dash or whitespace.
+The quote asset must be one of the quote assets supported by this service and
+must exactly match the PAPER account currency. Binance remains the final
+authority on whether the complete pair is listed. No implicit FX conversion
+or ambiguous suffix matching is performed.
+
 ## Current security boundary
 
 - The dashboard reports no balance/equity and an unconfigured account until
