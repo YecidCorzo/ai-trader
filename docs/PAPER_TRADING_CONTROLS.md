@@ -56,8 +56,9 @@ Equity is calculated as:
 
 Realized P&L is posted to the account ledger in the same SQLite transaction as
 the trade-close and audit events. The amount is net of entry and exit fees.
-Position marks use Decimal arithmetic and the stored quote currency; there is
-no implicit FX conversion.
+Position marks use Decimal arithmetic and the stored quote currency; the market
+symbol's quote asset must match the PAPER account currency. There is no
+implicit FX conversion.
 
 ```python
 equity = accounts.get_equity(account["id"])
