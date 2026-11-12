@@ -57,7 +57,6 @@ class PaperExecutionService:
         self._connection = connection
         self._repository = PaperTradingRepository(connection)
         self._ledger = TradeLedger(connection)
-        self._breaker = CircuitBreaker(connection)
         self._risk_engine = risk_engine or RiskEngine()
         self._accounts = account_service or PaperAccountService(connection)
 
@@ -106,7 +105,8 @@ class PaperExecutionService:
                 raise RiskRejectedError("max_open_positions_reached")
             self._accounts.persist_price_quotes(quotes, now=now)
             equity = self._accounts.calculate_equity(account_id, quotes=quotes, now=now)
-            breaker_halted = self._breaker.status()["halted"]
+            breaker = CircuitBreaker(self._connection, account_id)
+            breaker_halted = breaker.status()["halted"]
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
             metrics = self._repository.risk_metrics(
@@ -127,7 +127,7 @@ class PaperExecutionService:
             decision = self._risk_engine.evaluate(snapshot)
             if not decision.approved:
                 if decision.reason == "daily_loss_limit_reached" and not breaker_halted:
-                    self._breaker.halt(
+                    breaker.halt(
                         "Risk Engine: daily loss limit reached",
                         updated_by="risk_engine",
                     )
@@ -164,11 +164,19 @@ class PaperExecutionService:
             exit_fee=exit_fee, exit_reason=exit_reason,
         )
 
-    def circuit_breaker_status(self) -> dict:
-        return self._breaker.status()
+    def circuit_breaker_status(self, account_id: str) -> dict:
+        return CircuitBreaker(self._connection, account_id).status()
 
-    def halt(self, reason: str, *, updated_by: str = "operator") -> dict:
-        return self._breaker.halt(reason, updated_by=updated_by)
+    def halt(
+        self, account_id: str, reason: str, *, updated_by: str = "operator",
+    ) -> dict:
+        return CircuitBreaker(self._connection, account_id).halt(
+            reason, updated_by=updated_by,
+        )
 
-    def reset_circuit_breaker(self, *, confirmed_by: str) -> dict:
-        return self._breaker.reset(confirmed_by=confirmed_by)
+    def reset_circuit_breaker(
+        self, account_id: str, *, confirmed_by: str,
+    ) -> dict:
+        return CircuitBreaker(self._connection, account_id).reset(
+            confirmed_by=confirmed_by,
+        )
