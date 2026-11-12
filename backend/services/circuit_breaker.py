@@ -1,8 +1,4 @@
-"""Manual, persistent circuit breaker for simulated trading.
-
-Tripping is immediate and persisted. Reset always requires an explicit caller
-action and an audit event; this module has no exchange or order-routing code.
-"""
+"""Manual, persistent PAPER circuit breaker with optional account isolation."""
 from __future__ import annotations
 
 import json
@@ -21,34 +17,61 @@ def _utc_now() -> str:
 
 
 class CircuitBreaker:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, account_id: str | None = None) -> None:
         self._connection = connection
         self._repository = PaperTradingRepository(connection)
+        self._account_id = account_id
 
     def status(self) -> dict:
-        row = self._repository.get_risk_control()
-        return {
+        row = (
+            self._repository.get_account_risk_control(self._account_id)
+            if self._account_id is not None
+            else self._repository.get_risk_control()
+        )
+        result = {
             "halted": bool(row["halted"]),
             "reason": row["reason"],
             "updated_at": row["updated_at"],
             "updated_by": row["updated_by"],
             "mode": "paper",
         }
+        if self._account_id is not None:
+            result["account_id"] = self._account_id
+        return result
+
+    def _set_halted(
+        self, *, halted: bool, reason: str | None, updated_at: str,
+        updated_by: str, event_type: str, details: dict,
+    ) -> None:
+        arguments = {
+            "halted": halted,
+            "reason": reason,
+            "updated_at": updated_at,
+            "updated_by": updated_by,
+            "event_id": str(uuid4()),
+            "event_type": event_type,
+            "details_json": json.dumps(details, sort_keys=True),
+        }
+        if self._account_id is not None:
+            self._repository.set_account_halted(
+                account_id=self._account_id, **arguments
+            )
+        else:
+            self._repository.set_halted(**arguments)
 
     def halt(self, reason: str, *, updated_by: str = "operator") -> dict:
         reason = reason.strip()
         if not reason:
             raise ValueError("Se requiere un motivo para detener PAPER MODE")
         now = _utc_now()
+        details = {"reason": reason, "updated_by": updated_by}
+        if self._account_id is not None:
+            details["account_id"] = self._account_id
         try:
-            self._repository.set_halted(
-                halted=True,
-                reason=reason,
-                updated_at=now,
-                updated_by=updated_by,
-                event_id=str(uuid4()),
-                event_type="CIRCUIT_BREAKER_HALTED",
-                details_json=json.dumps({"reason": reason, "updated_by": updated_by}),
+            self._set_halted(
+                halted=True, reason=reason, updated_at=now,
+                updated_by=updated_by, event_type="CIRCUIT_BREAKER_HALTED",
+                details=details,
             )
             self._connection.commit()
         except Exception:
@@ -61,15 +84,14 @@ class CircuitBreaker:
         if not confirmed_by:
             raise ValueError("El rearme requiere confirmación explícita del operador")
         now = _utc_now()
+        details = {"confirmed_by": confirmed_by}
+        if self._account_id is not None:
+            details["account_id"] = self._account_id
         try:
-            self._repository.set_halted(
-                halted=False,
-                reason=None,
-                updated_at=now,
-                updated_by=confirmed_by,
-                event_id=str(uuid4()),
-                event_type="CIRCUIT_BREAKER_RESET",
-                details_json=json.dumps({"confirmed_by": confirmed_by}),
+            self._set_halted(
+                halted=False, reason=None, updated_at=now,
+                updated_by=confirmed_by, event_type="CIRCUIT_BREAKER_RESET",
+                details=details,
             )
             self._connection.commit()
         except Exception:
