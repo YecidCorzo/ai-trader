@@ -12,19 +12,32 @@ starting amount.
 
 ```python
 from backend.infrastructure.database import apply_migrations, connect_database
+from backend.security.principal import VerifiedPrincipal
 from backend.services.paper_account import PaperAccountService
 
 connection = connect_database()
 apply_migrations(connection)
 accounts = PaperAccountService(connection)  # read-only public Binance ticker
+# This value must come from the configured server-side credential verifier.
+# Do not construct a principal from request data or a client-supplied user ID.
+verified_principal = get_verified_principal_from_your_auth_dependency()
 account = accounts.create_account(
     name="Demo account",
     quote_currency="USDT",
     opening_capital="1000",
     idempotency_key="demo-account-opening-v1",
+    principal=verified_principal,
 )
 print(account["id"])
 ```
+
+New accounts require an immutable verified owner (`issuer` + stable `subject`).
+The owner-scoped account-creation idempotency key is stored as a SHA-256 digest;
+the raw key is not used as a global account identifier. Legacy accounts remain
+unowned and cannot be claimed automatically. The provider-neutral principal and
+authorization primitives do not constitute a configured identity provider; no
+account/execution HTTP routes are mounted until a real verifier is selected and
+configured.
 
 Opening capital, deposits, withdrawals, adjustments and realized trade P&L are
 stored as append-only account events. Funding events require an idempotency key;
