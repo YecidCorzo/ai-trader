@@ -18,32 +18,24 @@ Rules:
 
 ## Initial personal-finance schema
 
-Migration `0001_create_personal_finance_schema.sql` creates:
+Migration `0001_create_personal_finance_schema.sql` creates currencies,
+personal-finance accounts, categories, transactions and optional transaction
+valuations. Personal-finance account balances are separate from the PAPER
+trading account ledger.
 
-- `currencies`: ISO-style currency codes and minor-unit precision; the initial
-  reference set is SEK, EUR, USD and COP.
-- `accounts`: user-managed account metadata and its default currency.
-- `categories`: income/expense categories with optional parent categories.
-- `transactions`: immutable source amount in integer minor units and its
-  original currency. A transaction is not converted in place.
-- `transaction_valuations`: optional reporting-currency values with the FX
-  rate stored as decimal text, a documented `base_per_unit` convention,
-  provider, effective/retrieved timestamps and actual/estimated status.
-
-The reporting-currency default is SEK. Valuations are optional because an FX
-rate may be unavailable; callers must not invent a rate or silently assume
-parity. Account balances are derived from transactions in a later application
-service, not stored as a second mutable source of truth in this initial schema.
-
-
-## PAPER trade ledger
+## PAPER trading and account equity
 
 Migrations `0004_paper_trading_ledger.sql` and
-`0005_immutable_paper_trade_events.sql` add a simulated trade ledger, persistent
-circuit-breaker state, and append-only audit events with a durable sequence.
-The event migration preserves the order available at migration time. If a
-legacy database was VACUUMed before migration 0005, the original order of
-same-second events cannot be reconstructed reliably.
+`0005_immutable_paper_trade_events.sql` add simulated trades, a persistent
+circuit breaker and append-only audit events with durable sequence numbers.
 
-These tables are separate from personal-finance accounts and transactions.
-They do not represent real funds, bank balances, or exchange balances.
+Migration `0006_paper_account_equity.sql` adds explicitly funded PAPER
+accounts, append-only capital/P&L events, immutable public-market price
+snapshots, and an optional account link on new trades. Legacy trades remain
+unassigned and are not used to infer opening capital. A PAPER account requires
+an explicit opening-capital event before funding events or linked trades can
+be recorded.
+
+PAPER accounts are not connected to personal-finance accounts, real bank
+balances or exchange wallets. No HTTP account/execution routes are enabled;
+an authentication/authorization boundary is required before adding them.
