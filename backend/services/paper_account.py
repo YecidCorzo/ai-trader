@@ -216,7 +216,7 @@ class PaperAccountService:
             self._connection.execute("BEGIN IMMEDIATE")
             now = datetime.now(timezone.utc)
             self.persist_price_quotes(quotes, now=now)
-            equity = self.calculate_equity(account_id, quotes=quotes, now=now)
+            equity = self.calculate_equity(account_id, now=now)
             self._connection.commit()
             return equity
         except Exception:
@@ -248,12 +248,11 @@ class PaperAccountService:
         return sum((Decimal(row["amount"]) for row in rows), Decimal("0"))
 
     def calculate_equity(
-        self, account_id: str, *, quotes: list[PriceQuote] | None = None,
-        now: datetime | None = None,
+        self, account_id: str, *, now: datetime | None = None,
     ) -> Decimal:
-        account = self.get_account(account_id)
+        """Recompute equity only from persisted account events and price snapshots."""
+        self.get_account(account_id)
         checked_at = _utc(now)
-        quotes_by_symbol = {quote.symbol: quote for quote in (quotes or [])}
         rows = self._connection.execute(
             """SELECT symbol, side, quantity, entry_price, entry_fee
                FROM paper_trades
@@ -262,20 +261,15 @@ class PaperAccountService:
         ).fetchall()
         unrealized = Decimal("0")
         for trade in rows:
-            quote = quotes_by_symbol.get(trade["symbol"])
-            if quote is None:
-                latest = self._connection.execute(
-                    """SELECT price, source, retrieved_at FROM paper_price_snapshots
-                       WHERE symbol = ? ORDER BY sequence DESC LIMIT 1""",
-                    (trade["symbol"],),
-                ).fetchone()
-                if latest is None:
-                    raise StaleMarketPriceError(f"No hay precio disponible para {trade['symbol']}")
-                price = Decimal(latest["price"])
-                retrieved = datetime.fromisoformat(latest["retrieved_at"].replace("Z", "+00:00"))
-            else:
-                price = _money(quote.price, "market_price")
-                retrieved = _utc(quote.retrieved_at)
+            latest = self._connection.execute(
+                """SELECT price, retrieved_at FROM paper_price_snapshots
+                   WHERE symbol = ? ORDER BY sequence DESC LIMIT 1""",
+                (trade["symbol"],),
+            ).fetchone()
+            if latest is None:
+                raise StaleMarketPriceError(f"No hay precio disponible para {trade['symbol']}")
+            price = Decimal(latest["price"])
+            retrieved = datetime.fromisoformat(latest["retrieved_at"].replace("Z", "+00:00"))
             age = checked_at - retrieved
             if age < timedelta(0) or age > self._max_price_age:
                 raise StaleMarketPriceError(f"Precio stale o con timestamp inválido para {trade['symbol']}")
