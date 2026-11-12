@@ -97,7 +97,7 @@ class PaperAccountService:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             existing = self._connection.execute(
-                """SELECT id, name, quote_currency FROM paper_accounts
+                """SELECT id, name, quote_currency, owner_issuer, owner_subject FROM paper_accounts
                    WHERE creation_key = ?""",
                 (creation_key,),
             ).fetchone()
