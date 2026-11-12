@@ -28,12 +28,14 @@ class PaperStopMonitorTests(unittest.TestCase):
         self.connection = connect_database(":memory:")
         apply_migrations(self.connection)
         self.provider = FakePriceProvider()
+        self.principal = VerifiedPrincipal(issuer="https://tests.example", subject="paper-user-1")
         self.accounts = PaperAccountService(self.connection, self.provider)
         self.account = self.accounts.create_account(
             name="Stop monitor demo",
             quote_currency="USDT",
             opening_capital="10000",
             idempotency_key="stop-monitor-opening",
+            principal=self.principal,
         )
         self.execution = PaperExecutionService(
             self.connection, account_service=self.accounts
