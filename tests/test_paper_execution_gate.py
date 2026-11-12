@@ -124,6 +124,14 @@ class PaperExecutionGateTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.reason, "per_trade_risk_limit_exceeded")
 
+    def test_trade_quote_currency_must_match_account_currency(self):
+        usd = self.accounts.create_account(
+            name="USD demo", quote_currency="USD",
+            opening_capital="10000", idempotency_key="usd-opening",
+        )
+        with self.assertRaisesRegex(ValueError, "debe coincidir"):
+            self.open_position(account_id=usd["id"], symbol="SOLUSDT")
+
     def test_open_positions_and_loss_metrics_are_scoped_to_account(self):
         second = self.accounts.create_account(
             name="Second demo", quote_currency="USDT",
