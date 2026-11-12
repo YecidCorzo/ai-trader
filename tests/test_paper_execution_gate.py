@@ -157,6 +157,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.provider.price = Decimal("70")
         self.execution.close_position(prior["id"], account_id=self.account["id"])
         self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("9700"))
+        self.provider.price = Decimal("100")
         with self.assertRaises(RiskRejectedError) as raised:
             self.open_position()
         self.assertEqual(raised.exception.reason, "daily_loss_limit_reached")
