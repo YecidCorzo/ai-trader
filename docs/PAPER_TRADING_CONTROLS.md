@@ -109,12 +109,15 @@ attempts. A closed trade cannot be closed a second time.
 ```python
 from backend.services.circuit_breaker import CircuitBreaker
 
-breaker = CircuitBreaker(connection)
+breaker = CircuitBreaker(connection, account["id"])
 breaker.halt("daily loss limit reached", updated_by="operator")
 breaker.reset(confirmed_by="operator")  # explicit operator action
 ```
 
-The halt state persists in SQLite and reset requires explicit confirmation.
+The halt state persists in SQLite per PAPER account and reset requires
+explicit confirmation. One account's circuit breaker does not halt another
+account. The legacy global breaker remains available only for older internal
+callers; account-based execution always uses the account-scoped breaker.
 
 ## Current security boundary
 
