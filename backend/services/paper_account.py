@@ -77,9 +77,34 @@ class PaperAccountService:
         now = _timestamp(created_at)
         try:
             self._connection.execute("BEGIN IMMEDIATE")
+            existing = self._connection.execute(
+                """SELECT id, name, quote_currency FROM paper_accounts
+                   WHERE creation_key = ?""",
+                (key,),
+            ).fetchone()
+            if existing is not None:
+                opening = self._connection.execute(
+                    """SELECT amount, currency_code FROM paper_account_events
+                       WHERE account_id = ? AND event_type = 'OPENING_CAPITAL'""",
+                    (existing["id"],),
+                ).fetchone()
+                if (
+                    existing["name"] != name
+                    or existing["quote_currency"] != currency
+                    or opening is None
+                    or Decimal(opening["amount"]) != amount
+                    or opening["currency_code"] != currency
+                    or (account_id is not None and existing["id"] != account_id)
+                ):
+                    raise PaperAccountError("idempotency_key ya utilizado para otra cuenta o capital")
+                identifier = existing["id"]
+                self._connection.commit()
+                return self.get_account(identifier)
             self._connection.execute(
-                "INSERT INTO paper_accounts (id, name, quote_currency, created_at) VALUES (?, ?, ?, ?)",
-                (identifier, name, currency, now),
+                """INSERT INTO paper_accounts
+                   (id, name, quote_currency, creation_key, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (identifier, name, currency, key, now),
             )
             self._insert_event(
                 account_id=identifier, event_type="OPENING_CAPITAL",
