@@ -7,6 +7,7 @@ CREATE TABLE paper_accounts (
         length(quote_currency) BETWEEN 3 AND 8
         AND quote_currency = upper(quote_currency)
     ),
+    creation_key TEXT NOT NULL UNIQUE CHECK (length(trim(creation_key)) > 0),
     created_at TEXT NOT NULL
 );
 
@@ -163,4 +164,13 @@ BEFORE UPDATE OF paper_account_id ON paper_trades
 WHEN OLD.paper_account_id IS NOT NEW.paper_account_id
 BEGIN
     SELECT RAISE(ABORT, 'PAPER trade account link is immutable');
+END;
+
+CREATE TRIGGER paper_accounts_identity_immutable
+BEFORE UPDATE OF id, quote_currency, creation_key ON paper_accounts
+WHEN OLD.id IS NOT NEW.id
+  OR OLD.quote_currency IS NOT NEW.quote_currency
+  OR OLD.creation_key IS NOT NEW.creation_key
+BEGIN
+    SELECT RAISE(ABORT, 'PAPER account identity and currency are immutable');
 END;
