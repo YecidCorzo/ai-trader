@@ -81,7 +81,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         trade = self.open_position()
         self.assertEqual(trade["status"], "OPEN")
         self.assertEqual(trade["paper_account_id"], self.account["id"])
-        self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("9999.9"))
+        self.assertEqual(self.accounts.get_equity(self.account["id"]), Decimal("9999.9"))
         self.assertEqual(self.accounts.get_account(self.account["id"])["quote_currency"], "USDT")
 
     def test_risk_gate_does_not_accept_caller_controlled_equity(self):
