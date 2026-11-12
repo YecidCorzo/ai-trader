@@ -21,12 +21,12 @@ class PaperTradingRepository:
         self._connection.execute(
             """INSERT INTO paper_trades
                (id, symbol, strategy, side, quantity, entry_price, entry_fee,
-                status, opened_at, metadata_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)""",
+                status, opened_at, metadata_json, paper_account_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)""",
             (
                 trade["id"], trade["symbol"], trade["strategy"], trade["side"],
                 trade["quantity"], trade["entry_price"], trade["entry_fee"],
-                trade["opened_at"], trade["metadata_json"],
+                trade["opened_at"], trade["metadata_json"], trade.get("paper_account_id"),
             ),
         )
         self.add_event(
@@ -91,50 +91,56 @@ class PaperTradingRepository:
 
     def list_events(self, trade_id: str | None = None) -> list[sqlite3.Row]:
         if trade_id is None:
-            return self._all(
-                "SELECT * FROM paper_trade_events ORDER BY sequence"
-            )
+            return self._all("SELECT * FROM paper_trade_events ORDER BY sequence")
         return self._all(
-            """SELECT * FROM paper_trade_events
-               WHERE trade_id = ? ORDER BY sequence""",
+            "SELECT * FROM paper_trade_events WHERE trade_id = ? ORDER BY sequence",
             (trade_id,),
         )
 
-    def count_open_trades(self) -> int:
-        row = self._one("SELECT COUNT(*) AS trade_count FROM paper_trades WHERE status = 'OPEN'")
+    def count_open_trades(self, account_id: str | None = None) -> int:
+        if account_id is None:
+            row = self._one("SELECT COUNT(*) AS trade_count FROM paper_trades WHERE status = 'OPEN'")
+        else:
+            row = self._one(
+                """SELECT COUNT(*) AS trade_count FROM paper_trades
+                   WHERE status = 'OPEN' AND paper_account_id = ?""",
+                (account_id,),
+            )
         return int(row["trade_count"])
 
     def risk_metrics(
         self, *, day_start: str, day_end: str, loss_streak_limit: int,
+        account_id: str | None = None,
     ) -> dict[str, Any]:
-        """Derive mutable risk counters from persisted PAPER ledger records."""
-        opened = self._one(
-            """SELECT COUNT(*) AS trade_count FROM paper_trades
-               WHERE opened_at >= ? AND opened_at < ?""",
-            (day_start, day_end),
-        )
-        closed_today = self._all(
-            """SELECT realized_pnl FROM paper_trades
-               WHERE status = 'CLOSED' AND closed_at >= ? AND closed_at < ?""",
-            (day_start, day_end),
-        )
+        """Derive risk counters from persisted trades, scoped to a PAPER account."""
         from decimal import Decimal
 
+        account_clause = " AND paper_account_id = ?" if account_id is not None else ""
+        account_params = (account_id,) if account_id is not None else ()
+        opened = self._one(
+            "SELECT COUNT(*) AS trade_count FROM paper_trades "
+            "WHERE opened_at >= ? AND opened_at < ?" + account_clause,
+            (day_start, day_end, *account_params),
+        )
+        closed_today = self._all(
+            "SELECT realized_pnl FROM paper_trades "
+            "WHERE status = 'CLOSED' AND closed_at >= ? AND closed_at < ?" + account_clause,
+            (day_start, day_end, *account_params),
+        )
         daily_pnl = sum(
             (Decimal(row["realized_pnl"]) for row in closed_today),
             Decimal("0"),
         )
-        # A dedicated AUTOINCREMENT key is stable across VACUUM and tied timestamps.
         recent_closed = self._all(
             """SELECT trade.realized_pnl
                FROM paper_trades AS trade
                JOIN paper_trade_events AS event
                  ON event.trade_id = trade.id
                 AND event.event_type = 'TRADE_CLOSED'
-               WHERE trade.status = 'CLOSED'
+               WHERE trade.status = 'CLOSED'""" + account_clause + """
                ORDER BY event.sequence DESC
                LIMIT ?""",
-            (loss_streak_limit,),
+            (*account_params, loss_streak_limit),
         )
         consecutive_losses = 0
         for row in recent_closed:
