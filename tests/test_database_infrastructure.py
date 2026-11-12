@@ -1,3 +1,4 @@
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -123,6 +124,85 @@ class DatabaseMigrationTests(unittest.TestCase):
                     ).fetchone()[0],
                     0,
                 )
+            finally:
+                connection.close()
+
+    def test_immutable_audit_migration_preserves_existing_events_and_is_idempotent(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        migrations_dir = repository_root / "backend" / "infrastructure" / "migrations"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            legacy_dir = Path(temporary) / "legacy_migrations"
+            legacy_dir.mkdir()
+            for version in range(1, 5):
+                source = next(migrations_dir.glob(f"{version:04d}_*.sql"))
+                shutil.copyfile(source, legacy_dir / source.name)
+
+            connection = connect_database(":memory:")
+            try:
+                self.assertEqual(
+                    apply_migrations(connection, legacy_dir),
+                    ["0001", "0002", "0003", "0004"],
+                )
+                # Include a real trade reference so foreign_key_check validates
+                # the rebuilt audit table's relationship, not only NULL references.
+                connection.execute(
+                    """
+                    INSERT INTO paper_trades
+                        (id, symbol, strategy, side, quantity, entry_price,
+                         entry_fee, status, opened_at, metadata_json)
+                    VALUES (?, 'SOLUSDT', 'migration-test', 'LONG', '1',
+                            '100', '0', 'OPEN', ?, '{}')
+                    """,
+                    ("legacy-trade-1", "2026-11-11T09:00:00Z"),
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO paper_trade_events
+                        (id, trade_id, event_type, details_json, occurred_at)
+                    VALUES (?, NULL, 'CIRCUIT_BREAKER_HALTED', ?, ?)
+                    """,
+                    [
+                        ("legacy-event-1", '{"reason":"first"}', "2026-11-11T10:00:00Z"),
+                        ("legacy-event-2", '{"reason":"second"}', "2026-11-11T10:00:00Z"),
+                    ],
+                )
+                connection.execute(
+                    """
+                    INSERT INTO paper_trade_events
+                        (id, trade_id, event_type, details_json, occurred_at)
+                    VALUES (?, ?, 'TRADE_OPENED', '{}', ?)
+                    """,
+                    (
+                        "legacy-trade-event",
+                        "legacy-trade-1",
+                        "2026-11-11T09:00:00Z",
+                    ),
+                )
+                connection.commit()
+
+                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005"])
+                rows = connection.execute(
+                    """
+                    SELECT sequence, id, trade_id, details_json
+                    FROM paper_trade_events
+                    ORDER BY sequence
+                    """
+                ).fetchall()
+                self.assertEqual(
+                    [(row["id"], row["details_json"]) for row in rows],
+                    [
+                        ("legacy-event-1", '{"reason":"first"}'),
+                        ("legacy-event-2", '{"reason":"second"}'),
+                        ("legacy-trade-event", "{}"),
+                    ],
+                )
+                self.assertEqual([row["sequence"] for row in rows], [1, 2, 3])
+                self.assertEqual(rows[2]["trade_id"], "legacy-trade-1")
+                self.assertEqual(
+                    connection.execute("PRAGMA foreign_key_check").fetchall(), []
+                )
+                self.assertEqual(apply_migrations(connection, migrations_dir), [])
             finally:
                 connection.close()
 
