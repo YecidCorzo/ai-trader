@@ -152,22 +152,40 @@ class PaperAccountService:
         ).fetchone()
         return dict(row)
 
-    def fetch_open_position_quotes(self, account_id: str) -> list[PriceQuote]:
+    def fetch_open_position_quotes(
+        self, account_id: str, *, additional_symbols: tuple[str, ...] = (),
+    ) -> list[PriceQuote]:
         self.get_account(account_id)
         rows = self._connection.execute(
             """SELECT DISTINCT symbol FROM paper_trades
                WHERE paper_account_id = ? AND status = 'OPEN' ORDER BY symbol""",
             (account_id,),
         ).fetchall()
+        symbols = {row["symbol"] for row in rows}
+        symbols.update(symbol.strip().upper() for symbol in additional_symbols if symbol.strip())
         quotes = []
-        for row in rows:
-            quote = self._price_provider.get_price(row["symbol"])
+        for symbol in sorted(symbols):
+            quote = self._price_provider.get_price(symbol)
             if not isinstance(quote, PriceQuote):
                 raise StaleMarketPriceError("El proveedor de precios devolvió un formato no verificable")
-            if quote.symbol != row["symbol"] or quote.source.strip() == "":
+            if quote.symbol != symbol or quote.source.strip() == "":
                 raise StaleMarketPriceError("La cotización no corresponde al símbolo solicitado")
             quotes.append(quote)
         return quotes
+
+    def get_equity(self, account_id: str) -> Decimal:
+        """Fetch fresh marks and persist their snapshots before returning equity."""
+        quotes = self.fetch_open_position_quotes(account_id)
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            now = datetime.now(timezone.utc)
+            self.persist_price_quotes(quotes, now=now)
+            equity = self.calculate_equity(account_id, quotes=quotes, now=now)
+            self._connection.commit()
+            return equity
+        except Exception:
+            self._connection.rollback()
+            raise
 
     def persist_price_quotes(self, quotes: list[PriceQuote], *, now: datetime | None = None) -> None:
         checked_at = _utc(now)
