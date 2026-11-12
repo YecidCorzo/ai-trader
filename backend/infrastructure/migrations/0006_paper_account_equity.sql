@@ -6,6 +6,7 @@ CREATE TABLE paper_accounts (
     quote_currency TEXT NOT NULL CHECK (
         length(quote_currency) BETWEEN 3 AND 8
         AND quote_currency = upper(quote_currency)
+        AND quote_currency NOT GLOB '*[^A-Z0-9]*'
     ),
     creation_key TEXT NOT NULL UNIQUE CHECK (length(trim(creation_key)) > 0),
     created_at TEXT NOT NULL
@@ -36,6 +37,7 @@ CREATE TABLE paper_account_events (
     amount TEXT NOT NULL CHECK (
         amount NOT GLOB '*[^0-9eE+.-]*'
         AND CAST(amount AS REAL) != 0
+        AND ABS(CAST(amount AS REAL)) <= 9000000000000000
     ),
     currency_code TEXT NOT NULL CHECK (
         length(currency_code) BETWEEN 3 AND 8
