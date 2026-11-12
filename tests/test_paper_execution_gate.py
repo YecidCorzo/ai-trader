@@ -124,6 +124,28 @@ class PaperExecutionGateTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.reason, "per_trade_risk_limit_exceeded")
 
+    def test_binance_symbol_must_have_a_valid_base_and_exact_quote_asset(self):
+        invalid_symbols = [
+            "", "USDT", "SOL/USDT", "SOL-USDT", " SOLUSDT",
+            "SOLUSDT ", "SOLUSDTXYZ", "SOLUSDTUSDC", "1USDT",
+        ]
+        for symbol in invalid_symbols:
+            with self.subTest(symbol=symbol):
+                with self.assertRaises(ValueError):
+                    self.open_position(symbol=symbol)
+
+        # The canonical Binance symbol is accepted and stored normalized.
+        trade = self.open_position(symbol="SOLUSDT")
+        self.assertEqual(trade["symbol"], "SOLUSDT")
+
+    def test_account_quote_asset_must_be_supported_for_binance_spot(self):
+        usd = self.accounts.create_account(
+            name="USD demo", quote_currency="USD",
+            opening_capital="10000", idempotency_key="usd-opening",
+        )
+        with self.assertRaisesRegex(ValueError, "no está admitida"):
+            self.open_position(account_id=usd["id"], symbol="SOLUSD")
+
     def test_trade_quote_currency_must_match_account_currency(self):
         usd = self.accounts.create_account(
             name="USD demo", quote_currency="USD",
