@@ -12,22 +12,22 @@ starting amount.
 
 ```python
 from backend.infrastructure.database import apply_migrations, connect_database
-from backend.security.principal import VerifiedPrincipal
 from backend.services.paper_account import PaperAccountService
 
 connection = connect_database()
 apply_migrations(connection)
 accounts = PaperAccountService(connection)  # read-only public Binance ticker
-# This value must come from the configured server-side credential verifier.
-# Do not construct a principal from request data or a client-supplied user ID.
-verified_principal = get_verified_principal_from_your_auth_dependency()
-account = accounts.create_account(
-    name="Demo account",
-    quote_currency="USDT",
-    opening_capital="1000",
-    idempotency_key="demo-account-opening-v1",
-    principal=verified_principal,
-)
+
+def create_demo_account(verified_principal):
+    # Injected by a configured server-side credential verifier.
+    # Never construct this value from request data or X-User-Id.
+    return accounts.create_account(
+        name="Demo account",
+        quote_currency="USDT",
+        opening_capital="1000",
+        idempotency_key="demo-account-opening-v1",
+        principal=verified_principal,
+    )
 print(account["id"])
 ```
 
