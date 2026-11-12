@@ -7,13 +7,13 @@ on:
       - "fix/**"
       - "integration/**"
       - "platform/**"
+      - "finance/**"
+      - "trading/**"
+      - "security/**"
+      - "ci/**"
   pull_request:
-    branches:
-      - main
-      - "feature/**"
-      - "fix/**"
-      - "integration/**"
-      - "platform/**"
+    # Do not filter target branches: stacked PRs also require the same checks.
+  workflow_dispatch:
 
 jobs:
   unit-tests:
