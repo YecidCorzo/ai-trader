@@ -186,8 +186,10 @@ def get_signal_v2():
 
     except HTTPException:
         raise
+    except HTTPException:
+        raise
     except Exception:
-        raise _internal_server_error("unexpected_api_operation") from None
+        raise _internal_server_error("signal_v2") from None
 
 app.mount(
     "/dashboard",
@@ -245,8 +247,10 @@ def run_backtest(
 
         return result
 
+    except HTTPException:
+        raise
     except Exception:
-        raise _internal_server_error("unexpected_api_operation") from None
+        raise _internal_server_error("backtest") from None
 
 
 
