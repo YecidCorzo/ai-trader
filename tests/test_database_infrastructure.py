@@ -181,7 +181,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 )
                 connection.commit()
 
-                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005"])
+                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005", "0006"])
                 rows = connection.execute(
                     """
                     SELECT sequence, id, trade_id, details_json
