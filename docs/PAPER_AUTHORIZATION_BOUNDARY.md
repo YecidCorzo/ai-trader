@@ -2,11 +2,12 @@
 
 ## Status
 
-Design decision for the PAPER-only release. This document does **not** enable account
-or execution HTTP routes. The current application has no configured identity provider,
-token verifier, session store, or user-management system. Until one is selected and
-implemented, account/execution routes must remain absent and the API must not accept
-an account ID as proof of identity.
+Design and implementation gate for the PAPER-only release. Provider-neutral
+security primitives and persistent owner scoping are implemented, but this does
+**not** enable account or execution HTTP routes. No production identity provider,
+token verifier, session store, or user-management system is configured. Until a
+real verifier is selected, implemented and tested, account/execution routes must
+remain absent and the API must not accept an account ID as proof of identity.
 
 ## Security invariants
 
@@ -47,11 +48,10 @@ an account ID as proof of identity.
 
 ### Principal
 
-The authentication adapter must return an immutable principal containing:
-- verified issuer;
-- stable subject;
-- credential/session expiry;
-- authentication time and credential identifier where supported.
+The provider-neutral `VerifiedPrincipal` value is immutable and contains the
+verified issuer and stable subject. It deliberately contains no raw credential.
+A production authentication adapter must additionally validate and enforce
+credential/session expiry, authentication time and revocation/session state.
 
 The adapter must validate signature/algorithm allow-list, issuer, audience, expiry,
 not-before, and revocation/session state. It must reject malformed or ambiguous
@@ -61,8 +61,8 @@ the raw bearer token.
 
 ### Ownership persistence
 
-Before exposing account creation, add a migration that associates each new account
-with the verified `(issuer, subject)`. Enforce:
+Migration `0007_paper_account_ownership.sql` adds verified `(issuer, subject)`
+ownership to every newly created account. It enforces:
 - both owner fields are non-empty;
 - owner fields cannot be changed after account creation;
 - ownership cannot be deleted or reassigned;
@@ -75,8 +75,10 @@ provider is configured; it must not be silently claimed.
 
 ### Authorization service and route dependencies
 
-Use one central authorization service/dependency rather than repeating ad-hoc
-checks in route handlers. It must:
+The provider-neutral `build_current_principal_dependency` fails closed when no
+verifier is configured and accepts only a `VerifiedPrincipal` returned by the
+verifier. `PaperAuthorizationService` centralizes account/trade ownership lookups.
+Use these as the foundation for future route dependencies; they must:
 - reject an absent/invalid principal;
 - fetch an account only when both account ID and verified owner match;
 - fetch a trade only when trade ID, account ID and owner all match;
@@ -112,6 +114,30 @@ trade close, circuit-breaker, or stop-management HTTP routes until all required 
 above pass with the selected real verifier and the ownership migration. Before that
 point, the existing public market-analysis and backtest endpoints remain read-only
 analysis surfaces and must not imply that an account is authenticated or ready.
+
+## Implemented now
+
+- Immutable `VerifiedPrincipal` containing issuer + subject only.
+- Provider-neutral async bearer-verifier dependency. Missing configuration returns
+  503; malformed or rejected credentials return a generic 401 without leaking
+  verifier diagnostics.
+- New PAPER accounts require an owner. Owner fields are immutable at the SQLite
+  layer; legacy rows remain unowned.
+- Account-creation idempotency keys are SHA-256 digests scoped to issuer + subject,
+  so different owners may safely reuse the same client key.
+- Central owner-scoped account and trade lookup returns the same not-found domain
+  error for cross-owner and nonexistent resources.
+- Tests cover fail-closed unconfigured auth, malformed/rejected bearer tokens,
+  spoofed `X-User-Id`, immutable principals/ownership, owner-scoped idempotency,
+  and account/trade isolation.
+
+## Still blocked on provider selection
+
+The fake verifier in unit tests is not a production identity provider. Token
+signature/algorithm, issuer, audience, expiry, not-before, revocation, session
+management and provider outage behavior cannot be certified until a real provider
+adapter is selected and tested. Therefore no account/execution HTTP routes are
+mounted, and the PAPER account service is not exposed to remote callers.
 
 ## Provider selection remains an explicit decision
 
