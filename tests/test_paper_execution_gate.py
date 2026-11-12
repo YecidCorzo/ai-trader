@@ -13,6 +13,7 @@ from backend.services.paper_account import (
 )
 from backend.services.paper_execution import PaperExecutionService, RiskRejectedError
 from backend.services.paper_price import PriceQuote
+from backend.services.risk_engine import RiskEngine, RiskLimits
 from backend.services.trade_ledger import TradeLedger
 
 
@@ -246,7 +247,9 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.connection, FakePriceProvider(age=timedelta(minutes=2))
         )
         stale_execution = PaperExecutionService(
-            self.connection, account_service=stale_accounts
+            self.connection,
+            risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
+            account_service=stale_accounts,
         )
         with self.assertRaises(StaleMarketPriceError):
             stale_execution.open_position(
