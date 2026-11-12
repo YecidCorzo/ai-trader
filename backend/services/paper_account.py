@@ -26,7 +26,12 @@ def _money(value: Decimal | str | int, field: str, *, allow_negative: bool = Fal
         amount = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         raise PaperAccountError(f"{field} debe ser un decimal válido") from None
-    if not amount.is_finite() or amount == 0 or (amount < 0 and not allow_negative):
+    if (
+        not amount.is_finite()
+        or amount == 0
+        or abs(amount) > Decimal("9000000000000000")
+        or (amount < 0 and not allow_negative)
+    ):
         raise PaperAccountError(f"{field} debe ser finito y {'no cero' if allow_negative else 'positivo'}")
     return amount
 
@@ -166,8 +171,8 @@ class PaperAccountService:
                 self._connection.commit()
                 return dict(existing)
             balance = self._balance(account_id)
-            if event_type == "WITHDRAWAL" and balance - value < 0:
-                raise PaperAccountError("El retiro supera el saldo disponible de la cuenta PAPER")
+            if signed < 0 and balance + signed < 0:
+                raise PaperAccountError("El movimiento supera el saldo disponible de la cuenta PAPER")
             self._insert_event(
                 account_id=account_id, event_type=event_type, amount=signed,
                 currency=account["quote_currency"], idempotency_key=key,
