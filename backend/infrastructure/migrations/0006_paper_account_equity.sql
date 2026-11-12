@@ -66,6 +66,23 @@ BEGIN
     SELECT RAISE(ABORT, 'PAPER opening capital must be the first account event');
 END;
 
+CREATE TRIGGER paper_account_events_currency_matches_account
+BEFORE INSERT ON paper_account_events
+WHEN NEW.currency_code <> (
+    SELECT quote_currency FROM paper_accounts WHERE id = NEW.account_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'PAPER account event currency must match account currency');
+END;
+
+CREATE TRIGGER paper_account_events_amount_sign
+BEFORE INSERT ON paper_account_events
+WHEN (NEW.event_type IN ('OPENING_CAPITAL', 'DEPOSIT') AND CAST(NEW.amount AS REAL) <= 0)
+  OR (NEW.event_type = 'WITHDRAWAL' AND CAST(NEW.amount AS REAL) >= 0)
+BEGIN
+    SELECT RAISE(ABORT, 'PAPER account event amount has invalid sign');
+END;
+
 CREATE TRIGGER paper_account_events_no_replace
 BEFORE INSERT ON paper_account_events
 WHEN EXISTS (
@@ -139,4 +156,11 @@ WHEN NEW.paper_account_id IS NOT NULL
  )
 BEGIN
     SELECT RAISE(ABORT, 'PAPER trade requires an explicitly funded account');
+END;
+
+CREATE TRIGGER paper_trades_account_link_immutable
+BEFORE UPDATE OF paper_account_id ON paper_trades
+WHEN OLD.paper_account_id IS NOT NEW.paper_account_id
+BEGIN
+    SELECT RAISE(ABORT, 'PAPER trade account link is immutable');
 END;
