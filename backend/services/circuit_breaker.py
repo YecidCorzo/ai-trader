@@ -68,6 +68,8 @@ class CircuitBreaker:
         if self._account_id is not None:
             details["account_id"] = self._account_id
         try:
+            if not self._connection.in_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
             self._set_halted(
                 halted=True, reason=reason, updated_at=now,
                 updated_by=updated_by, event_type="CIRCUIT_BREAKER_HALTED",
@@ -88,6 +90,8 @@ class CircuitBreaker:
         if self._account_id is not None:
             details["account_id"] = self._account_id
         try:
+            if not self._connection.in_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
             self._set_halted(
                 halted=False, reason=None, updated_at=now,
                 updated_by=confirmed_by, event_type="CIRCUIT_BREAKER_RESET",
