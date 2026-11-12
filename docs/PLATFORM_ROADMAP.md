@@ -119,8 +119,8 @@ A feature is not considered complete merely because it works once on the develop
 
 ## Working agreement
 
-- All development happens on `feature/financial-platform`.
-- Do not commit to or modify `main`.
+- Development happens on short-lived working branches created from the reviewed integration base; changes are delivered through pull requests.
+- Never commit directly to `main` or `feature/financial-platform`; both are protected integration targets.
 - Make small, reviewable commits and run available tests before each change.
 - Do not delete or rewrite working functionality merely to fit a new architecture.
 - Report what changed, what was tested, and what remains unverified after each implementation step.
@@ -251,3 +251,35 @@ These are internal research gates, not guarantees and not financial advice. Pass
 5. Add database-backed integration tests and verify the existing trading endpoints remain unchanged.
 
 PAPER MODE remains mandatory. No real orders, bank credentials or exchange trading credentials are part of this infrastructure work.
+
+
+## Verified implementation status — 2026-11-11 (PR chain under review)
+
+The following status supersedes older implementation-log statements where they conflict; earlier entries are retained as historical records.
+
+### Open stacked PRs and CI evidence
+- PR #38 (`finance/monthly-budgets` → `finance/repository-layer`): FinanceRepository extraction. GitHub Actions run #43031030430 completed SUCCESS; logs show 124 tests passed, dependency installation, `pip check` and compile checks.
+- PR #39 (`finance/repository-layer` → `trading/paper-ledger-risk-controls`): persistent PAPER ledger, risk engine and circuit breaker. GitHub Actions run #43032255544 completed SUCCESS; logs show 132 tests passed and the same dependency/compile checks.
+- PR #40 (`trading/paper-ledger-risk-controls` → `trading/paper-execution-gate`): pre-entry PAPER gate. GitHub Actions run #43032501551 completed SUCCESS; logs show 138 tests passed and the same dependency/compile checks.
+- These are separate stacked PR heads. Their test counts are not additive and do not prove a single integrated end-to-end build.
+
+### Implemented on the top branch of this PR chain
+- Pinned runtime dependencies in root `requirements.txt`.
+- SQLite persistence with versioned migrations and configurable local database path.
+- Personal-finance API for currencies, accounts, categories, manual transactions, opening balances, balances, cash-flow reports and monthly category budgets.
+- FinanceRepository boundary for finance SQL.
+- Persistent simulated trade ledger, audit events, deterministic risk engine and circuit breaker.
+- PaperExecutionService as a pre-trade validation gate.
+- The root `README.md` and `docs/PLATFORM_STATUS.md` provide macOS setup, local test commands, current scope and limitations.
+
+### Still incomplete / not verified as an integrated user release
+- The PR chain is not yet integrated into `feature/financial-platform`; the branch comparison remains divergent and must be resolved via reviewed PRs.
+- Personal-finance UI, CSV import, FX conversion/consolidation, investment portfolio and market-intelligence domains are not implemented as complete user flows.
+- The PAPER execution gate still relies on caller-supplied verified equity and daily risk snapshots. It records caller-supplied simulated fills; it does not fetch execution prices or submit orders.
+- Stop prices are risk metadata; no market watcher executes stops/targets.
+- No full end-to-end test of clean macOS installation, browser dashboard and all finance/PAPER flows has been recorded.
+- The finance API remains local single-user and unauthenticated. Bind only to `127.0.0.1`; do not expose it to a LAN or public network.
+- No strategy is certified profitable. Backtests are simulations, not forecasts.
+
+### Release decision
+**NO-GO for user acceptance.** CI is green on each of the three stacked PR heads, but integration, full user flows, installation verification and explicit acceptance evidence remain outstanding. PAPER MODE remains mandatory; live trading is out of scope.
