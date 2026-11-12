@@ -71,10 +71,28 @@ class PaperExecutionGateTests(unittest.TestCase):
                 idempotency_key="missing",
             )
         self.connection.execute(
-            "INSERT INTO paper_accounts (id, name, quote_currency, created_at) VALUES ('empty', 'Empty', 'USDT', '2026-11-12T00:00:00Z')"
+            "INSERT INTO paper_accounts (id, name, quote_currency, creation_key, created_at) VALUES ('empty', 'Empty', 'USDT', 'empty-account', '2026-11-12T00:00:00Z')"
         )
         with self.assertRaises(MissingOpeningCapitalError):
             self.accounts.get_account("empty")
+
+    def test_account_creation_is_idempotent_and_rejects_conflicting_reuse(self):
+        repeated = self.accounts.create_account(
+            name="Demo account", quote_currency="USDT",
+            opening_capital="10000", idempotency_key="initial-capital",
+        )
+        self.assertEqual(repeated["id"], self.account["id"])
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM paper_accounts"
+            ).fetchone()[0],
+            1,
+        )
+        with self.assertRaises(PaperAccountError):
+            self.accounts.create_account(
+                name="Different account", quote_currency="USDT",
+                opening_capital="10000", idempotency_key="initial-capital",
+            )
 
     def test_approved_entry_uses_persisted_account_equity(self):
         trade = self.open_position()
