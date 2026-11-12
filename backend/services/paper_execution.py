@@ -87,11 +87,17 @@ class PaperExecutionService:
         planned_loss = abs(entry - stop) * qty + opening_fee + exit_fee
         # Network I/O happens before acquiring SQLite's write lock. The quotes
         # are checked again for age and persisted inside the atomic risk transaction.
-        quotes = self._accounts.fetch_open_position_quotes(account_id)
+        quotes = self._accounts.fetch_open_position_quotes(
+            account_id, additional_symbols=(symbol,),
+        )
 
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             now = datetime.now(timezone.utc)
+            open_positions = self._repository.count_open_trades(account_id)
+            if open_positions >= self._risk_engine.limits.max_open_positions:
+                self._connection.rollback()
+                raise RiskRejectedError("max_open_positions_reached")
             self._accounts.persist_price_quotes(quotes, now=now)
             equity = self._accounts.calculate_equity(account_id, quotes=quotes, now=now)
             breaker_halted = self._breaker.status()["halted"]
@@ -107,7 +113,7 @@ class PaperExecutionService:
                 equity=equity,
                 planned_loss=planned_loss,
                 daily_realized_pnl=metrics["daily_realized_pnl"],
-                open_positions=self._repository.count_open_trades(account_id),
+                open_positions=open_positions,
                 trades_today=metrics["trades_today"],
                 consecutive_losses=metrics["consecutive_losses"],
                 circuit_breaker_halted=breaker_halted,
