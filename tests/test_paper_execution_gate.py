@@ -154,7 +154,8 @@ class PaperExecutionGateTests(unittest.TestCase):
             stop_price="99",
             entry_fee="0", estimated_exit_fee="0",
         )
-        self.execution.close_position(prior["id"], exit_price="70")
+        self.provider.price = Decimal("70")
+        self.execution.close_position(prior["id"], account_id=self.account["id"])
         self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("9700"))
         with self.assertRaises(RiskRejectedError) as raised:
             self.open_position()
@@ -163,7 +164,10 @@ class PaperExecutionGateTests(unittest.TestCase):
 
     def test_trade_realized_pnl_is_booked_once_with_trade_close(self):
         trade = self.open_position()
-        closed = self.execution.close_position(trade["id"], exit_price="110", exit_fee="0.1")
+        self.provider.price = Decimal("110")
+        closed = self.execution.close_position(
+            trade["id"], account_id=self.account["id"], exit_fee="0.1"
+        )
         self.assertEqual(Decimal(closed["realized_pnl"]), Decimal("9.8"))
         events = self.connection.execute(
             """SELECT amount, idempotency_key FROM paper_account_events
@@ -174,6 +178,19 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.assertEqual(Decimal(events[0]["amount"]), Decimal("9.8"))
         self.assertEqual(events[0]["idempotency_key"], f"trade-close:{trade['id']}")
 
+    def test_exit_price_is_market_sourced_and_account_scoped(self):
+        trade = self.open_position()
+        with self.assertRaises(TypeError):
+            self.execution.close_position(
+                trade["id"], account_id=self.account["id"], exit_price="999999"
+            )
+        other = self.accounts.create_account(
+            name="Not owner", quote_currency="USDT",
+            opening_capital="10000", idempotency_key="not-owner",
+        )
+        with self.assertRaisesRegex(ValueError, "no pertenece"):
+            self.execution.close_position(trade["id"], account_id=other["id"])
+
     def test_close_rolls_back_trade_if_account_event_cannot_be_written(self):
         trade = self.open_position()
         self.connection.execute("""
@@ -182,8 +199,9 @@ class PaperExecutionGateTests(unittest.TestCase):
             WHEN NEW.event_type = 'TRADE_REALIZED_PNL'
             BEGIN SELECT RAISE(ABORT, 'injected account event failure'); END
         """)
+        self.provider.price = Decimal("110")
         with self.assertRaises(sqlite3.IntegrityError):
-            self.execution.close_position(trade["id"], exit_price="110")
+            self.execution.close_position(trade["id"], account_id=self.account["id"])
         stored = self.execution._ledger.get_trade(trade["id"])
         self.assertEqual(stored["status"], "OPEN")
         self.assertEqual(
