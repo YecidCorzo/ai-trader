@@ -153,6 +153,37 @@ class PaperTradingRepository:
             "consecutive_losses": consecutive_losses,
         }
 
+    def get_account_risk_control(self, account_id: str) -> sqlite3.Row:
+        row = self._one(
+            "SELECT * FROM paper_account_risk_controls WHERE account_id = ?",
+            (account_id,),
+        )
+        if row is None:
+            raise RuntimeError("Falta el control de riesgo de la cuenta PAPER")
+        return row
+
+    def set_account_halted(
+        self, *, account_id: str, halted: bool, reason: str | None,
+        updated_at: str, updated_by: str, event_id: str,
+        event_type: str, details_json: str,
+    ) -> bool:
+        current = self.get_account_risk_control(account_id)
+        target = 1 if halted else 0
+        if current["halted"] == target:
+            return False
+        cursor = self._connection.execute(
+            """UPDATE paper_account_risk_controls
+               SET halted = ?, reason = ?, updated_at = ?, updated_by = ?
+               WHERE account_id = ?""",
+            (target, reason, updated_at, updated_by, account_id),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("No se pudo actualizar el control de riesgo PAPER")
+        self.add_event(
+            event_id, None, event_type, details_json, updated_at
+        )
+        return True
+
     def get_risk_control(self) -> sqlite3.Row:
         row = self._one("SELECT * FROM paper_risk_control WHERE id = 1")
         if row is None:
