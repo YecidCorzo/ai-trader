@@ -1,6 +1,7 @@
 """Pre-trade gate for simulated entries; no live order-routing capability."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -45,6 +46,44 @@ def _non_negative_decimal(value: Decimal | str | int, field: str) -> Decimal:
     return result
 
 
+# Quote assets supported by Binance spot symbols. Matching is exact: we do not
+# infer an account currency from an arbitrary suffix or apply implicit FX.
+_BINANCE_QUOTE_ASSETS = frozenset({
+    "USDT", "USDC", "FDUSD", "TUSD", "BUSD", "BTC", "ETH", "BNB",
+    "EUR", "TRY", "BRL", "GBP", "AUD", "BIDR", "DAI", "UAH",
+    "ZAR", "RUB", "PLN", "RON", "ARS", "NGN", "IDRT",
+})
+
+
+def _validate_account_symbol(symbol: str, quote_currency: str) -> str:
+    if not isinstance(symbol, str) or not symbol:
+        raise ValueError("symbol debe ser un par spot de Binance")
+    normalized = symbol.upper()
+    if normalized != symbol or not re.fullmatch(r"[A-Z0-9]{5,30}", normalized):
+        raise ValueError(
+            "symbol debe usar el formato canónico BASEQUOTE de Binance, sin espacios ni separadores"
+        )
+    if quote_currency not in _BINANCE_QUOTE_ASSETS:
+        raise ValueError(
+            f"La moneda {quote_currency} no está admitida como quote asset para ejecución PAPER en Binance"
+        )
+    matched_quote = next(
+        (asset for asset in sorted(_BINANCE_QUOTE_ASSETS, key=len, reverse=True)
+         if normalized.endswith(asset)),
+        None,
+    )
+    if matched_quote is None:
+        raise ValueError("No se pudo identificar la moneda cotizada del símbolo Binance")
+    base_asset = normalized[:-len(matched_quote)]
+    if not re.fullmatch(r"[A-Z0-9]{2,20}", base_asset):
+        raise ValueError("El símbolo Binance no contiene un activo base válido")
+    if matched_quote != quote_currency:
+        raise ValueError(
+            f"El símbolo cotiza en {matched_quote}, pero la cuenta PAPER usa {quote_currency}; no se aplica conversión FX"
+        )
+    return normalized
+
+
 class PaperExecutionService:
     """Validate risk from a persisted PAPER account before recording an entry."""
 
@@ -69,11 +108,9 @@ class PaperExecutionService:
         if not account_id or not account_id.strip():
             raise ValueError("account_id es obligatorio")
         account = self._accounts.get_account(account_id)
-        normalized_symbol = symbol.strip().upper()
-        if not normalized_symbol.endswith(account["quote_currency"]):
-            raise ValueError(
-                "La divisa cotizada del símbolo debe coincidir con la moneda de la cuenta PAPER; no se aplica conversión FX"
-            )
+        normalized_symbol = _validate_account_symbol(
+            symbol, account["quote_currency"]
+        )
         side = side.strip().upper()
         if side not in {"LONG", "SHORT"}:
             raise ValueError("side debe ser LONG o SHORT")
@@ -85,7 +122,7 @@ class PaperExecutionService:
         # Network I/O happens before acquiring SQLite's write lock. The quotes
         # are checked again for age and persisted inside the atomic risk transaction.
         quotes = self._accounts.fetch_open_position_quotes(
-            account_id, additional_symbols=(symbol,),
+            account_id, additional_symbols=(normalized_symbol,),
         )
         entry_quote = next(
             (quote for quote in quotes if quote.symbol == normalized_symbol),
@@ -150,7 +187,7 @@ class PaperExecutionService:
                 "equity_source": "persisted_paper_account",
             })
             return self._ledger.open_trade(
-                symbol=symbol, strategy=strategy, side=side,
+                symbol=normalized_symbol, strategy=strategy, side=side,
                 quantity=qty, entry_price=entry, entry_fee=opening_fee,
                 metadata=trade_metadata, paper_account_id=account_id,
             )
