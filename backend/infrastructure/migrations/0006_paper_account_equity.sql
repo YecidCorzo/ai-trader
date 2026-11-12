@@ -184,3 +184,16 @@ WHEN OLD.id IS NOT NEW.id
 BEGIN
     SELECT RAISE(ABORT, 'PAPER account identity and currency are immutable');
 END;
+
+CREATE TRIGGER paper_account_risk_control_identity_immutable
+BEFORE UPDATE OF account_id ON paper_account_risk_controls
+WHEN OLD.account_id IS NOT NEW.account_id
+BEGIN
+    SELECT RAISE(ABORT, 'PAPER account risk-control identity is immutable');
+END;
+
+CREATE TRIGGER paper_account_risk_controls_no_delete
+BEFORE DELETE ON paper_account_risk_controls
+BEGIN
+    SELECT RAISE(ABORT, 'PAPER account risk-control state cannot be deleted');
+END;
