@@ -181,7 +181,15 @@ class DatabaseMigrationTests(unittest.TestCase):
                 )
                 connection.commit()
 
-                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005"])
+                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005", "0006"])
+                legacy_trade = connection.execute(
+                    "SELECT paper_account_id FROM paper_trades WHERE id = 'legacy-trade-1'"
+                ).fetchone()
+                self.assertIsNone(legacy_trade["paper_account_id"])
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM paper_accounts").fetchone()[0],
+                    0,
+                )
                 rows = connection.execute(
                     """
                     SELECT sequence, id, trade_id, details_json

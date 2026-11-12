@@ -1,20 +1,21 @@
 """Pre-trade gate for simulated entries; no live order-routing capability."""
 from __future__ import annotations
 
-import json
+import re
 import sqlite3
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 try:
     from backend.repositories.paper_trading_repository import PaperTradingRepository
     from backend.services.circuit_breaker import CircuitBreaker
+    from backend.services.paper_account import PaperAccountService
     from backend.services.risk_engine import RiskEngine, RiskSnapshot
     from backend.services.trade_ledger import TradeLedger
 except ImportError:  # Support uvicorn with backend/ as the app directory.
     from repositories.paper_trading_repository import PaperTradingRepository
     from services.circuit_breaker import CircuitBreaker
+    from services.paper_account import PaperAccountService
     from services.risk_engine import RiskEngine, RiskSnapshot
     from services.trade_ledger import TradeLedger
 
@@ -45,66 +46,122 @@ def _non_negative_decimal(value: Decimal | str | int, field: str) -> Decimal:
     return result
 
 
-class PaperExecutionService:
-    """Validate risk and breaker state before recording a simulated entry.
+# Quote assets supported by Binance spot symbols. Matching is exact: we do not
+# infer an account currency from an arbitrary suffix or apply implicit FX.
+_BINANCE_QUOTE_ASSETS = frozenset({
+    "USDT", "USDC", "FDUSD", "TUSD", "BUSD", "BTC", "ETH", "BNB",
+    "EUR", "TRY", "BRL", "GBP", "AUD", "BIDR", "DAI", "UAH",
+    "ZAR", "RUB", "PLN", "RON", "ARS", "NGN", "IDRT",
+})
 
-    The caller supplies the paper-account equity, which has no persisted source
-    in this version. Daily P&L, open positions, daily trade count, consecutive
-    losses and breaker state are derived from SQLite while holding a write lock.
-    """
+
+def _validate_account_symbol(symbol: str, quote_currency: str) -> str:
+    if not isinstance(symbol, str) or not symbol:
+        raise ValueError("symbol debe ser un par spot de Binance")
+    normalized = symbol.upper()
+    if normalized != symbol or not re.fullmatch(r"[A-Z0-9]{5,30}", normalized):
+        raise ValueError(
+            "symbol debe usar el formato canónico BASEQUOTE de Binance, sin espacios ni separadores"
+        )
+    if quote_currency not in _BINANCE_QUOTE_ASSETS:
+        raise ValueError(
+            f"La moneda {quote_currency} no está admitida como quote asset para ejecución PAPER en Binance"
+        )
+    matched_quote = next(
+        (asset for asset in sorted(_BINANCE_QUOTE_ASSETS, key=len, reverse=True)
+         if normalized.endswith(asset)),
+        None,
+    )
+    if matched_quote is None:
+        raise ValueError("No se pudo identificar la moneda cotizada del símbolo Binance")
+    base_asset = normalized[:-len(matched_quote)]
+    if not re.fullmatch(r"[A-Z0-9]{2,20}", base_asset):
+        raise ValueError("El símbolo Binance no contiene un activo base válido")
+    if matched_quote != quote_currency:
+        raise ValueError(
+            f"El símbolo cotiza en {matched_quote}, pero la cuenta PAPER usa {quote_currency}; no se aplica conversión FX"
+        )
+    return normalized
+
+
+class PaperExecutionService:
+    """Validate risk from a persisted PAPER account before recording an entry."""
 
     def __init__(
         self,
         connection: sqlite3.Connection,
         risk_engine: RiskEngine | None = None,
+        account_service: PaperAccountService | None = None,
     ) -> None:
         self._connection = connection
         self._repository = PaperTradingRepository(connection)
         self._ledger = TradeLedger(connection)
-        self._breaker = CircuitBreaker(connection)
         self._risk_engine = risk_engine or RiskEngine()
+        self._accounts = account_service or PaperAccountService(connection)
 
     def open_position(
-        self, *, symbol: str, strategy: str, side: str,
-        quantity: Decimal | str, entry_price: Decimal | str,
-        stop_price: Decimal | str, risk_snapshot: RiskSnapshot,
+        self, *, account_id: str, symbol: str, strategy: str, side: str,
+        quantity: Decimal | str, stop_price: Decimal | str,
         entry_fee: Decimal | str = "0",
-        estimated_exit_fee: Decimal | str = "0",
-        metadata: dict | None = None,
+        estimated_exit_fee: Decimal | str = "0", metadata: dict | None = None,
     ) -> dict:
+        if not account_id or not account_id.strip():
+            raise ValueError("account_id es obligatorio")
+        account = self._accounts.get_account(account_id)
+        normalized_symbol = _validate_account_symbol(
+            symbol, account["quote_currency"]
+        )
         side = side.strip().upper()
         if side not in {"LONG", "SHORT"}:
             raise ValueError("side debe ser LONG o SHORT")
         qty = _positive_decimal(quantity, "quantity")
-        entry = _positive_decimal(entry_price, "entry_price")
         stop = _positive_decimal(stop_price, "stop_price")
         opening_fee = _non_negative_decimal(entry_fee, "entry_fee")
         exit_fee = _non_negative_decimal(estimated_exit_fee, "estimated_exit_fee")
 
-        if side == "LONG" and stop >= entry:
-            raise ValueError("El stop de LONG debe estar por debajo de la entrada")
-        if side == "SHORT" and stop <= entry:
-            raise ValueError("El stop de SHORT debe estar por encima de la entrada")
+        # Network I/O happens before acquiring SQLite's write lock. The quotes
+        # are checked again for age and persisted inside the atomic risk transaction.
+        quotes = self._accounts.fetch_open_position_quotes(
+            account_id, additional_symbols=(normalized_symbol,),
+        )
+        entry_quote = next(
+            (quote for quote in quotes if quote.symbol == normalized_symbol),
+            None,
+        )
+        if entry_quote is None:
+            raise ValueError("No hay un precio de mercado actual para el símbolo")
+        entry = _positive_decimal(entry_quote.price, "market_entry_price")
 
+        if side == "LONG" and stop >= entry:
+            raise ValueError("El stop de LONG debe estar por debajo del precio de mercado")
+        if side == "SHORT" and stop <= entry:
+            raise ValueError("El stop de SHORT debe estar por encima del precio de mercado")
         planned_loss = abs(entry - stop) * qty + opening_fee + exit_fee
 
         try:
-            # Serialize concurrent entry checks against the same SQLite file.
             self._connection.execute("BEGIN IMMEDIATE")
-            breaker_halted = self._breaker.status()["halted"]
             now = datetime.now(timezone.utc)
+            open_positions = self._repository.count_open_trades(account_id)
+            if open_positions >= self._risk_engine.limits.max_open_positions:
+                self._connection.rollback()
+                raise RiskRejectedError("max_open_positions_reached")
+            self._accounts.persist_price_quotes(quotes, now=now)
+            equity = self._accounts.calculate_equity(account_id, now=now)
+            breaker = CircuitBreaker(self._connection, account_id)
+            breaker_halted = breaker.status()["halted"]
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
             metrics = self._repository.risk_metrics(
                 day_start=day_start.isoformat(timespec="seconds").replace("+00:00", "Z"),
                 day_end=day_end.isoformat(timespec="seconds").replace("+00:00", "Z"),
                 loss_streak_limit=self._risk_engine.limits.max_consecutive_losses,
+                account_id=account_id,
             )
-            snapshot = replace(
-                risk_snapshot,
+            snapshot = RiskSnapshot(
+                equity=equity,
                 planned_loss=planned_loss,
                 daily_realized_pnl=metrics["daily_realized_pnl"],
-                open_positions=self._repository.count_open_trades(),
+                open_positions=open_positions,
                 trades_today=metrics["trades_today"],
                 consecutive_losses=metrics["consecutive_losses"],
                 circuit_breaker_halted=breaker_halted,
@@ -112,7 +169,7 @@ class PaperExecutionService:
             decision = self._risk_engine.evaluate(snapshot)
             if not decision.approved:
                 if decision.reason == "daily_loss_limit_reached" and not breaker_halted:
-                    self._breaker.halt(
+                    breaker.halt(
                         "Risk Engine: daily loss limit reached",
                         updated_by="risk_engine",
                     )
@@ -123,18 +180,16 @@ class PaperExecutionService:
             trade_metadata = dict(metadata or {})
             trade_metadata.update({
                 "mode": "paper",
+                "paper_account_id": account_id,
                 "stop_price": str(stop),
                 "planned_loss": str(planned_loss),
                 "risk_ratio": str(decision.risk_ratio),
+                "equity_source": "persisted_paper_account",
             })
             return self._ledger.open_trade(
-                symbol=symbol,
-                strategy=strategy,
-                side=side,
-                quantity=qty,
-                entry_price=entry,
-                entry_fee=opening_fee,
-                metadata=trade_metadata,
+                symbol=normalized_symbol, strategy=strategy, side=side,
+                quantity=qty, entry_price=entry, entry_fee=opening_fee,
+                metadata=trade_metadata, paper_account_id=account_id,
             )
         except RiskRejectedError:
             raise
@@ -143,19 +198,55 @@ class PaperExecutionService:
             raise
 
     def close_position(
-        self, trade_id: str, *, exit_price: Decimal | str,
+        self, trade_id: str, *, account_id: str,
         exit_fee: Decimal | str = "0", exit_reason: str | None = None,
     ) -> dict:
-        return self._ledger.close_trade(
-            trade_id, exit_price=exit_price,
-            exit_fee=exit_fee, exit_reason=exit_reason,
+        trade = self._ledger.get_trade(trade_id)
+        if trade is None:
+            raise ValueError("Operación no encontrada")
+        if trade["paper_account_id"] != account_id:
+            raise ValueError("La operación no pertenece a la cuenta PAPER indicada")
+        closing_fee = _non_negative_decimal(exit_fee, "exit_fee")
+        quotes = self._accounts.fetch_open_position_quotes(
+            account_id, additional_symbols=(trade["symbol"],),
+        )
+        quote = next(
+            (item for item in quotes if item.symbol == trade["symbol"]),
+            None,
+        )
+        if quote is None:
+            raise ValueError("No hay un precio de mercado actual para cerrar la operación")
+
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            current = self._ledger.get_trade(trade_id)
+            if current is None or current["status"] != "OPEN":
+                raise ValueError("La operación ya está cerrada o no existe")
+            if current["paper_account_id"] != account_id:
+                raise ValueError("La operación no pertenece a la cuenta PAPER indicada")
+            now = datetime.now(timezone.utc)
+            self._accounts.persist_price_quotes(quotes, now=now)
+            return self._ledger.close_trade(
+                trade_id, exit_price=quote.price,
+                exit_fee=closing_fee, exit_reason=exit_reason,
+            )
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def circuit_breaker_status(self, account_id: str) -> dict:
+        return CircuitBreaker(self._connection, account_id).status()
+
+    def halt(
+        self, account_id: str, reason: str, *, updated_by: str = "operator",
+    ) -> dict:
+        return CircuitBreaker(self._connection, account_id).halt(
+            reason, updated_by=updated_by,
         )
 
-    def circuit_breaker_status(self) -> dict:
-        return self._breaker.status()
-
-    def halt(self, reason: str, *, updated_by: str = "operator") -> dict:
-        return self._breaker.halt(reason, updated_by=updated_by)
-
-    def reset_circuit_breaker(self, *, confirmed_by: str) -> dict:
-        return self._breaker.reset(confirmed_by=confirmed_by)
+    def reset_circuit_breaker(
+        self, account_id: str, *, confirmed_by: str,
+    ) -> dict:
+        return CircuitBreaker(self._connection, account_id).reset(
+            confirmed_by=confirmed_by,
+        )

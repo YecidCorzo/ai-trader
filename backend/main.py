@@ -52,10 +52,13 @@ def dashboard():
     return {
         "symbol": "SOL/USDT",
         "mode": "paper",
-        "bot_status": "ready",
-        "balance": 10000,
+        "bot_status": "account_not_configured",
+        "account_status": "not_configured",
+        "balance": None,
+        "equity": None,
         "positions": [],
-        "data_type": "simulated"
+        "data_type": "not_configured",
+        "message": "Crea una cuenta PAPER con capital inicial explícito antes de iniciar la simulación."
     }
 
 @app.get("/api/price")

@@ -103,13 +103,13 @@
       </div>
       <div class="card">
         <div class="muted">Balance demo</div>
-        <div class="value">10,000 USDT</div>
-        <p class="muted">Capital virtual inicial</p>
+        <div class="value" id="paper-balance">No configurado</div>
+        <p class="muted" id="paper-account-status">Capital inicial PAPER pendiente de configurar</p>
       </div>
 
       <div class="card">
         <div class="muted">Estado del bot</div>
-        <div class="value green">Preparado</div>
+        <div class="value" id="paper-bot-status">Cuenta no configurada</div>
         <p class="muted">Sin órdenes reales</p>
       </div>
     </section>
@@ -194,10 +194,26 @@
 
       const data = await response.json();
 
+      const balance = document.getElementById("paper-balance");
+      const accountStatus = document.getElementById("paper-account-status");
+      const botStatus = document.getElementById("paper-bot-status");
+      if (data.balance == null || data.account_status !== "configured") {
+        balance.textContent = "No configurado";
+        accountStatus.textContent = "Capital inicial PAPER pendiente de configurar";
+        botStatus.textContent = "Cuenta no configurada";
+      } else {
+        balance.textContent = Number(data.balance).toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }) + " " + data.quote_currency;
+        accountStatus.textContent = "Cuenta PAPER activa";
+        botStatus.textContent = "Preparado";
+      }
+
       status.textContent =
         "API conectada · " + data.symbol +
         " · Modo " + data.mode.toUpperCase() +
-        " · Datos simulados";
+        " · " + (data.account_status === "configured" ? "Cuenta PAPER" : "Cuenta pendiente");
     } catch (error) {
       status.textContent =
         "API no conectada. Comprueba que FastAPI esté ejecutándose.";
