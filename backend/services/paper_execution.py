@@ -68,6 +68,12 @@ class PaperExecutionService:
     ) -> dict:
         if not account_id or not account_id.strip():
             raise ValueError("account_id es obligatorio")
+        account = self._accounts.get_account(account_id)
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol.endswith(account["quote_currency"]):
+            raise ValueError(
+                "La divisa cotizada del símbolo debe coincidir con la moneda de la cuenta PAPER; no se aplica conversión FX"
+            )
         side = side.strip().upper()
         if side not in {"LONG", "SHORT"}:
             raise ValueError("side debe ser LONG o SHORT")
@@ -81,7 +87,6 @@ class PaperExecutionService:
         quotes = self._accounts.fetch_open_position_quotes(
             account_id, additional_symbols=(symbol,),
         )
-        normalized_symbol = symbol.strip().upper()
         entry_quote = next(
             (quote for quote in quotes if quote.symbol == normalized_symbol),
             None,
