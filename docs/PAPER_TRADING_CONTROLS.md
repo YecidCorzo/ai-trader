@@ -80,9 +80,16 @@ trade = execution.open_position(
     entry_fee="0.1",
     estimated_exit_fee="0.1",
 )
+# Close at a fresh public market quote; caller cannot supply the exit price.
+execution.close_position(
+    trade["id"],
+    account_id=account["id"],
+    exit_fee="0.1",
+)
 ```
 
-The execution service does not accept caller-supplied equity, entry price or a
+The execution service does not accept caller-supplied equity, entry price,
+exit price or a
 caller-built risk snapshot. The simulated entry fill is taken from a fresh
 public market quote; the stop and quantity are validated against that fill.
 It derives equity from the selected persisted PAPER account, fresh price
