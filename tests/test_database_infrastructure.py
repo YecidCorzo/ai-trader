@@ -181,7 +181,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 )
                 connection.commit()
 
-                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005", "0006"])
+                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005", "0006", "0007"])
                 legacy_trade = connection.execute(
                     "SELECT paper_account_id FROM paper_trades WHERE id = 'legacy-trade-1'"
                 ).fetchone()
