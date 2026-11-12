@@ -18,6 +18,14 @@ ALTER TABLE paper_trades
 CREATE INDEX idx_paper_trades_account_status
     ON paper_trades (paper_account_id, status, opened_at DESC);
 
+CREATE TABLE paper_account_risk_controls (
+    account_id TEXT PRIMARY KEY REFERENCES paper_accounts(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+    halted INTEGER NOT NULL DEFAULT 0 CHECK (halted IN (0, 1)),
+    reason TEXT,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL
+);
+
 CREATE TABLE paper_account_events (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
