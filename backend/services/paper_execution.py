@@ -64,8 +64,8 @@ class PaperExecutionService:
 
     def open_position(
         self, *, account_id: str, symbol: str, strategy: str, side: str,
-        quantity: Decimal | str, entry_price: Decimal | str,
-        stop_price: Decimal | str, entry_fee: Decimal | str = "0",
+        quantity: Decimal | str, stop_price: Decimal | str,
+        entry_fee: Decimal | str = "0",
         estimated_exit_fee: Decimal | str = "0", metadata: dict | None = None,
     ) -> dict:
         if not account_id or not account_id.strip():
@@ -74,7 +74,6 @@ class PaperExecutionService:
         if side not in {"LONG", "SHORT"}:
             raise ValueError("side debe ser LONG o SHORT")
         qty = _positive_decimal(quantity, "quantity")
-        entry = _positive_decimal(entry_price, "entry_price")
         stop = _positive_decimal(stop_price, "stop_price")
         opening_fee = _non_negative_decimal(entry_fee, "entry_fee")
         exit_fee = _non_negative_decimal(estimated_exit_fee, "estimated_exit_fee")
@@ -90,6 +89,19 @@ class PaperExecutionService:
         quotes = self._accounts.fetch_open_position_quotes(
             account_id, additional_symbols=(symbol,),
         )
+        normalized_symbol = symbol.strip().upper()
+        entry_quote = next(
+            (quote for quote in quotes if quote.symbol == normalized_symbol),
+            None,
+        )
+        if entry_quote is None:
+            raise ValueError("No hay un precio de mercado actual para el símbolo")
+        entry = _positive_decimal(entry_quote.price, "market_entry_price")
+
+        if side == "LONG" and stop >= entry:
+            raise ValueError("El stop de LONG debe estar por debajo del precio de mercado")
+        if side == "SHORT" and stop <= entry:
+            raise ValueError("El stop de SHORT debe estar por encima del precio de mercado")
 
         try:
             self._connection.execute("BEGIN IMMEDIATE")
