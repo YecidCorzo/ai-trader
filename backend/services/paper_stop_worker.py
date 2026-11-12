@@ -6,6 +6,7 @@ Run as a separate process with the same AI_TRADER_DB_PATH as the API:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import signal
 from threading import Event
@@ -31,8 +32,8 @@ class PaperStopWorker:
         poll_interval_seconds: float = 1.0,
         execution_service_factory=None,
     ) -> None:
-        if poll_interval_seconds <= 0:
-            raise ValueError("poll_interval_seconds debe ser positivo")
+        if not math.isfinite(poll_interval_seconds) or poll_interval_seconds <= 0:
+            raise ValueError("poll_interval_seconds debe ser positivo y finito")
         self._connection = connection
         self._poll_interval_seconds = poll_interval_seconds
         self._execution_service_factory = (
@@ -51,7 +52,13 @@ class PaperStopWorker:
             account_id = row["paper_account_id"]
             try:
                 service = self._execution_service_factory(self._connection)
-                closed.extend(service.process_stop_losses(account_id))
+                account_closed = service.process_stop_losses(account_id)
+                for trade in account_closed:
+                    logger.info(
+                        "PAPER stop triggered: account=%s trade=%s symbol=%s exit_price=%s",
+                        account_id, trade["id"], trade["symbol"], trade["exit_price"],
+                    )
+                closed.extend(account_closed)
             except Exception:
                 # A bad/stale quote for one account must not stop other accounts.
                 logger.exception(
@@ -66,7 +73,10 @@ class PaperStopWorker:
             self._poll_interval_seconds,
         )
         while not stop_event.is_set():
-            self.run_once()
+            try:
+                self.run_once()
+            except Exception:
+                logger.exception("PAPER stop worker scan failed")
             stop_event.wait(self._poll_interval_seconds)
         logger.info("PAPER stop worker stopped")
 
