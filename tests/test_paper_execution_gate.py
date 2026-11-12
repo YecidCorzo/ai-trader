@@ -57,7 +57,6 @@ class PaperExecutionGateTests(unittest.TestCase):
             "strategy": "ema-rsi",
             "side": "LONG",
             "quantity": "1",
-            "entry_price": "100",
             "stop_price": "95",
             "entry_fee": "0.1",
             "estimated_exit_fee": "0.1",
@@ -89,7 +88,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.execution.open_position(
                 account_id=self.account["id"], symbol="SOLUSDT",
                 strategy="ema-rsi", side="LONG", quantity="1",
-                entry_price="100", stop_price="95",
+                stop_price="95",
                 risk_snapshot={"equity": "999999999"},
             )
 
@@ -101,7 +100,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         with self.assertRaises(RiskRejectedError) as raised:
             self.open_position(
                 account_id=small["id"], quantity="1",
-                entry_price="100", stop_price="95",
+                stop_price="95",
                 entry_fee="0", estimated_exit_fee="0",
             )
         self.assertEqual(raised.exception.reason, "per_trade_risk_limit_exceeded")
@@ -119,7 +118,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         prior = self.execution.open_position(
             account_id=self.account["id"], symbol="SOLUSDT",
             strategy="test", side="LONG", quantity="10",
-            entry_price="100", stop_price="99",
+            stop_price="99",
             entry_fee="0", estimated_exit_fee="0",
         )
         self.execution.close_position(prior["id"], exit_price="70")
@@ -197,7 +196,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             stale_execution.open_position(
                 account_id=self.account["id"], symbol="BTCUSDT",
                 strategy="ema-rsi", side="LONG", quantity="1",
-                entry_price="100", stop_price="95",
+                stop_price="95",
             )
         self.assertEqual(
             self.connection.execute(
@@ -216,7 +215,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             execution.open_position(
                 account_id=self.account["id"], symbol="BTCUSDT",
                 strategy="ema-rsi", side="LONG", quantity="1",
-                entry_price="100", stop_price="95",
+                stop_price="95",
             )
 
     def test_price_snapshots_are_append_only(self):
@@ -255,7 +254,7 @@ class PaperExecutionGateTests(unittest.TestCase):
                     return service.open_position(
                         account_id=account["id"], symbol=symbol,
                         strategy="ema-rsi", side="LONG", quantity="1",
-                        entry_price="100", stop_price="95",
+                        stop_price="95",
                     )
                 except RiskRejectedError as error:
                     return error.reason
