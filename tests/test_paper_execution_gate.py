@@ -147,12 +147,12 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.open_position(account_id=usd["id"], symbol="SOLUSD")
 
     def test_trade_quote_currency_must_match_account_currency(self):
-        usd = self.accounts.create_account(
-            name="USD demo", quote_currency="USD",
-            opening_capital="10000", idempotency_key="usd-opening",
+        usdc = self.accounts.create_account(
+            name="USDC demo", quote_currency="USDC",
+            opening_capital="10000", idempotency_key="usdc-opening",
         )
-        with self.assertRaisesRegex(ValueError, "debe coincidir"):
-            self.open_position(account_id=usd["id"], symbol="SOLUSDT")
+        with self.assertRaisesRegex(ValueError, "cotiza en USDT"):
+            self.open_position(account_id=usdc["id"], symbol="SOLUSDT")
 
     def test_open_positions_and_loss_metrics_are_scoped_to_account(self):
         second = self.accounts.create_account(
