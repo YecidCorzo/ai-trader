@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from backend.infrastructure.database import apply_migrations, connect_database
+from backend.security.principal import VerifiedPrincipal
 from backend.services.paper_account import (
     MissingOpeningCapitalError, PaperAccountService, PaperAccountError,
     StaleMarketPriceError,
@@ -39,10 +40,12 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.connection = connect_database(":memory:")
         apply_migrations(self.connection)
         self.provider = FakePriceProvider()
+        self.principal = VerifiedPrincipal(issuer="https://tests.example", subject="paper-user-1")
         self.accounts = PaperAccountService(self.connection, self.provider)
         self.account = self.accounts.create_account(
             name="Demo account", quote_currency="USDT",
             opening_capital="10000", idempotency_key="initial-capital",
+            principal=self.principal,
         )
         self.execution = PaperExecutionService(
             self.connection, account_service=self.accounts
@@ -70,9 +73,10 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.accounts.create_account(
                 name="Missing capital", quote_currency="USDT",
                 idempotency_key="missing",
+            principal=self.principal,
             )
         self.connection.execute(
-            "INSERT INTO paper_accounts (id, name, quote_currency, creation_key, created_at) VALUES ('empty', 'Empty', 'USDT', 'empty-account', '2026-11-12T00:00:00Z')"
+            "INSERT INTO paper_accounts (id, name, quote_currency, creation_key, created_at, owner_issuer, owner_subject) VALUES ('empty', 'Empty', 'USDT', 'empty-account', '2026-11-12T00:00:00Z', 'https://tests.example', 'paper-user-1')"
         )
         with self.assertRaises(MissingOpeningCapitalError):
             self.accounts.get_account("empty")
@@ -81,6 +85,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         repeated = self.accounts.create_account(
             name="Demo account", quote_currency="USDT",
             opening_capital="10000", idempotency_key="initial-capital",
+            principal=self.principal,
         )
         self.assertEqual(repeated["id"], self.account["id"])
         self.assertEqual(
@@ -93,6 +98,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.accounts.create_account(
                 name="Different account", quote_currency="USDT",
                 opening_capital="10000", idempotency_key="initial-capital",
+            principal=self.principal,
             )
 
     def test_approved_entry_uses_persisted_account_equity(self):
@@ -115,6 +121,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         small = self.accounts.create_account(
             name="Small demo", quote_currency="USDT",
             opening_capital="100", idempotency_key="small-opening",
+            principal=self.principal,
         )
         with self.assertRaises(RiskRejectedError) as raised:
             self.open_position(
@@ -142,6 +149,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         usd = self.accounts.create_account(
             name="USD demo", quote_currency="USD",
             opening_capital="10000", idempotency_key="usd-opening",
+            principal=self.principal,
         )
         with self.assertRaisesRegex(ValueError, "no está admitida"):
             self.open_position(account_id=usd["id"], symbol="SOLUSD")
@@ -150,6 +158,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         usdc = self.accounts.create_account(
             name="USDC demo", quote_currency="USDC",
             opening_capital="10000", idempotency_key="usdc-opening",
+            principal=self.principal,
         )
         with self.assertRaisesRegex(ValueError, "cotiza en USDT"):
             self.open_position(account_id=usdc["id"], symbol="SOLUSDT")
@@ -158,6 +167,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         second = self.accounts.create_account(
             name="Second demo", quote_currency="USDT",
             opening_capital="10000", idempotency_key="second-opening",
+            principal=self.principal,
         )
         self.open_position()
         other = self.open_position(account_id=second["id"])
@@ -167,6 +177,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         second = self.accounts.create_account(
             name="Independent demo", quote_currency="USDT",
             opening_capital="10000", idempotency_key="independent-opening",
+            principal=self.principal,
         )
         self.execution.halt(self.account["id"], "operator requested stop")
         self.assertTrue(self.execution.circuit_breaker_status(self.account["id"])["halted"])
@@ -218,6 +229,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         other = self.accounts.create_account(
             name="Not owner", quote_currency="USDT",
             opening_capital="10000", idempotency_key="not-owner",
+            principal=self.principal,
         )
         with self.assertRaisesRegex(ValueError, "no pertenece"):
             self.execution.close_position(trade["id"], account_id=other["id"])
@@ -246,10 +258,12 @@ class PaperExecutionGateTests(unittest.TestCase):
         first = self.accounts.record_funding(
             self.account["id"], event_type="DEPOSIT", amount="250",
             idempotency_key="deposit-1",
+            principal=self.principal,
         )
         second = self.accounts.record_funding(
             self.account["id"], event_type="DEPOSIT", amount="250",
             idempotency_key="deposit-1",
+            principal=self.principal,
         )
         self.assertEqual(first["id"], second["id"])
         self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("10250"))
@@ -257,6 +271,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.accounts.record_funding(
                 self.account["id"], event_type="DEPOSIT", amount="300",
                 idempotency_key="deposit-1",
+            principal=self.principal,
             )
 
     def test_account_events_reject_insert_or_replace_and_currency_mismatch(self):
@@ -288,6 +303,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.accounts.record_funding(
                 self.account["id"], event_type="WITHDRAWAL", amount="10001",
                 idempotency_key="too-large",
+            principal=self.principal,
             )
 
     def test_stale_or_unavailable_price_fails_closed_for_open_positions(self):
@@ -351,6 +367,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             account = accounts.create_account(
                 name="Concurrent demo", quote_currency="USDT",
                 opening_capital="10000", idempotency_key="concurrent-opening",
+            principal=self.principal,
             )
             setup.close()
 
