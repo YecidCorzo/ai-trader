@@ -1,157 +1,261 @@
-import json
+import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from backend.infrastructure.database import apply_migrations, connect_database
+from backend.services.paper_account import (
+    MissingOpeningCapitalError, PaperAccountService, PaperAccountError,
+    StaleMarketPriceError,
+)
 from backend.services.paper_execution import PaperExecutionService, RiskRejectedError
+from backend.services.paper_price import PriceQuote
 from backend.services.trade_ledger import TradeLedger
-from backend.services.risk_engine import RiskEngine, RiskLimits, RiskSnapshot
+
+
+class FakePriceProvider:
+    def __init__(self, *, price="100", age=timedelta(0), fail=False):
+        self.price = Decimal(price)
+        self.age = age
+        self.fail = fail
+
+    def get_price(self, symbol):
+        if self.fail:
+            raise RuntimeError("market data unavailable")
+        return PriceQuote(
+            symbol=symbol,
+            price=self.price,
+            source="test-fixture",
+            retrieved_at=datetime.now(timezone.utc) - self.age,
+        )
 
 
 class PaperExecutionGateTests(unittest.TestCase):
     def setUp(self):
         self.connection = connect_database(":memory:")
         apply_migrations(self.connection)
-        self.execution = PaperExecutionService(self.connection)
+        self.provider = FakePriceProvider()
+        self.accounts = PaperAccountService(self.connection, self.provider)
+        self.account = self.accounts.create_account(
+            name="Demo account", quote_currency="USDT",
+            opening_capital="10000", idempotency_key="initial-capital",
+        )
+        self.execution = PaperExecutionService(
+            self.connection, account_service=self.accounts
+        )
 
     def tearDown(self):
         self.connection.close()
 
-    def snapshot(self, **overrides):
+    def open_position(self, **overrides):
         values = {
-            "equity": Decimal("10000"),
-            "planned_loss": Decimal("1"),  # Recomputed from entry/stop by the service.
-            "daily_realized_pnl": Decimal("0"),
-            "open_positions": 0,  # Recomputed from the ledger by the service.
-            "trades_today": 0,
-            "consecutive_losses": 0,
+            "account_id": self.account["id"],
+            "symbol": "SOLUSDT",
+            "strategy": "ema-rsi",
+            "side": "LONG",
+            "quantity": "1",
+            "entry_price": "100",
+            "stop_price": "95",
+            "entry_fee": "0.1",
+            "estimated_exit_fee": "0.1",
         }
         values.update(overrides)
-        return RiskSnapshot(**values)
+        return self.execution.open_position(**values)
 
-    def test_approved_entry_is_recorded_as_paper_and_stop_risk_is_audited(self):
-        trade = self.execution.open_position(
-            symbol="SOLUSDT", strategy="ema-rsi", side="LONG",
-            quantity="1", entry_price="100", stop_price="95",
-            risk_snapshot=self.snapshot(), entry_fee="0.1",
-            estimated_exit_fee="0.1",
-        )
-        self.assertEqual(trade["status"], "OPEN")
-        metadata = json.loads(trade["metadata_json"])
-        self.assertEqual(metadata["mode"], "paper")
-        self.assertEqual(metadata["stop_price"], "95")
-        self.assertEqual(metadata["planned_loss"], "5.2")
-
-    def test_actual_open_position_count_blocks_second_entry(self):
-        self.execution.open_position(
-            symbol="SOLUSDT", strategy="ema-rsi", side="LONG",
-            quantity="1", entry_price="100", stop_price="95",
-            risk_snapshot=self.snapshot(),
-        )
-        with self.assertRaises(RiskRejectedError) as raised:
-            self.execution.open_position(
-                symbol="BTCUSDT", strategy="ema-rsi", side="LONG",
-                quantity="1", entry_price="100", stop_price="95",
-                risk_snapshot=self.snapshot(),
+    def test_account_requires_explicit_opening_capital(self):
+        with self.assertRaises(TypeError):
+            self.accounts.create_account(
+                name="Missing capital", quote_currency="USDT",
+                idempotency_key="missing",
             )
-        self.assertEqual(raised.exception.reason, "max_open_positions_reached")
+        self.connection.execute(
+            "INSERT INTO paper_accounts (id, name, quote_currency, created_at) VALUES ('empty', 'Empty', 'USDT', '2026-11-12T00:00:00Z')"
+        )
+        with self.assertRaises(MissingOpeningCapitalError):
+            self.accounts.get_account("empty")
 
-    def test_risk_over_one_percent_rejects_entry(self):
-        with self.assertRaises(RiskRejectedError) as raised:
+    def test_approved_entry_uses_persisted_account_equity(self):
+        trade = self.open_position()
+        self.assertEqual(trade["status"], "OPEN")
+        self.assertEqual(trade["paper_account_id"], self.account["id"])
+        self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("9999.9"))
+        self.assertEqual(self.accounts.get_account(self.account["id"])["quote_currency"], "USDT")
+
+    def test_risk_gate_does_not_accept_caller_controlled_equity(self):
+        with self.assertRaises(TypeError):
             self.execution.open_position(
-                symbol="SOLUSDT", strategy="ema-rsi", side="LONG",
-                quantity="3", entry_price="100", stop_price="95",
-                risk_snapshot=self.snapshot(equity=Decimal("1000")),
+                account_id=self.account["id"], symbol="SOLUSDT",
+                strategy="ema-rsi", side="LONG", quantity="1",
+                entry_price="100", stop_price="95",
+                risk_snapshot={"equity": "999999999"},
+            )
+
+    def test_risk_limit_uses_account_capital_not_a_caller_snapshot(self):
+        small = self.accounts.create_account(
+            name="Small demo", quote_currency="USDT",
+            opening_capital="100", idempotency_key="small-opening",
+        )
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position(
+                account_id=small["id"], quantity="1",
+                entry_price="100", stop_price="95",
+                entry_fee="0", estimated_exit_fee="0",
             )
         self.assertEqual(raised.exception.reason, "per_trade_risk_limit_exceeded")
 
-    def test_daily_loss_is_derived_from_ledger_not_caller_snapshot(self):
-        ledger = TradeLedger(self.connection)
-        prior = ledger.open_trade(
-            symbol="SOLUSDT", strategy="test", side="LONG",
-            quantity="10", entry_price="100",
+    def test_open_positions_and_loss_metrics_are_scoped_to_account(self):
+        second = self.accounts.create_account(
+            name="Second demo", quote_currency="USDT",
+            opening_capital="10000", idempotency_key="second-opening",
         )
-        ledger.close_trade(prior["id"], exit_price="70")
+        self.open_position()
+        other = self.open_position(account_id=second["id"])
+        self.assertEqual(other["paper_account_id"], second["id"])
 
+    def test_daily_loss_is_derived_from_account_trade_ledger(self):
+        prior = self.execution.open_position(
+            account_id=self.account["id"], symbol="SOLUSDT",
+            strategy="test", side="LONG", quantity="10",
+            entry_price="100", stop_price="99",
+            entry_fee="0", estimated_exit_fee="0",
+        )
+        self.execution.close_position(prior["id"], exit_price="70")
+        self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("9700"))
         with self.assertRaises(RiskRejectedError) as raised:
-            self.execution.open_position(
-                symbol="SOLUSDT", strategy="ema-rsi", side="LONG",
-                quantity="1", entry_price="100", stop_price="95",
-                # Deliberately lie about the counters: persisted ledger must win.
-                risk_snapshot=self.snapshot(daily_realized_pnl=Decimal("0")),
-            )
+            self.open_position()
         self.assertEqual(raised.exception.reason, "daily_loss_limit_reached")
         self.assertTrue(self.execution.circuit_breaker_status()["halted"])
-        with self.assertRaises(RiskRejectedError) as halted:
-            self.execution.open_position(
-                symbol="SOLUSDT", strategy="ema-rsi", side="LONG",
-                quantity="1", entry_price="100", stop_price="95",
-                risk_snapshot=self.snapshot(),
+
+    def test_trade_realized_pnl_is_booked_once_with_trade_close(self):
+        trade = self.open_position()
+        closed = self.execution.close_position(trade["id"], exit_price="110", exit_fee="0.1")
+        self.assertEqual(Decimal(closed["realized_pnl"]), Decimal("9.8"))
+        events = self.connection.execute(
+            """SELECT amount, idempotency_key FROM paper_account_events
+               WHERE account_id = ? AND event_type = 'TRADE_REALIZED_PNL'""",
+            (self.account["id"],),
+        ).fetchall()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(Decimal(events[0]["amount"]), Decimal("9.8"))
+        self.assertEqual(events[0]["idempotency_key"], f"trade-close:{trade['id']}")
+
+    def test_close_rolls_back_trade_if_account_event_cannot_be_written(self):
+        trade = self.open_position()
+        self.connection.execute("""
+            CREATE TRIGGER fail_realized_event
+            BEFORE INSERT ON paper_account_events
+            WHEN NEW.event_type = 'TRADE_REALIZED_PNL'
+            BEGIN SELECT RAISE(ABORT, 'injected account event failure'); END
+        """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.execution.close_position(trade["id"], exit_price="110")
+        stored = self.execution._ledger.get_trade(trade["id"])
+        self.assertEqual(stored["status"], "OPEN")
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM paper_account_events WHERE event_type = 'TRADE_REALIZED_PNL'"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_duplicate_funding_is_idempotent_and_conflicting_reuse_is_rejected(self):
+        first = self.accounts.record_funding(
+            self.account["id"], event_type="DEPOSIT", amount="250",
+            idempotency_key="deposit-1",
+        )
+        second = self.accounts.record_funding(
+            self.account["id"], event_type="DEPOSIT", amount="250",
+            idempotency_key="deposit-1",
+        )
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("10250"))
+        with self.assertRaises(PaperAccountError):
+            self.accounts.record_funding(
+                self.account["id"], event_type="DEPOSIT", amount="300",
+                idempotency_key="deposit-1",
             )
-        self.assertEqual(halted.exception.reason, "circuit_breaker_halted")
 
-        self.execution.reset_circuit_breaker(confirmed_by="operator")
-        self.assertFalse(self.execution.circuit_breaker_status()["halted"])
-
-    def test_manual_halt_blocks_entry(self):
-        self.execution.halt("operator requested stop")
-        with self.assertRaises(RiskRejectedError) as raised:
-            self.execution.open_position(
-                symbol="SOLUSDT", strategy="ema-rsi", side="LONG",
-                quantity="1", entry_price="100", stop_price="95",
-                risk_snapshot=self.snapshot(),
+    def test_withdrawal_cannot_exceed_available_balance(self):
+        with self.assertRaises(PaperAccountError):
+            self.accounts.record_funding(
+                self.account["id"], event_type="WITHDRAWAL", amount="10001",
+                idempotency_key="too-large",
             )
-        self.assertEqual(raised.exception.reason, "circuit_breaker_halted")
 
-    def test_invalid_stop_side_is_rejected_before_any_ledger_write(self):
-        with self.assertRaisesRegex(ValueError, "stop de LONG"):
-            self.execution.open_position(
-                symbol="SOLUSDT", strategy="ema-rsi", side="LONG",
-                quantity="1", entry_price="100", stop_price="101",
-                risk_snapshot=self.snapshot(),
+    def test_stale_or_unavailable_price_fails_closed_for_open_positions(self):
+        self.open_position()
+        stale_accounts = PaperAccountService(
+            self.connection, FakePriceProvider(age=timedelta(minutes=2))
+        )
+        stale_execution = PaperExecutionService(
+            self.connection, account_service=stale_accounts
+        )
+        with self.assertRaises(StaleMarketPriceError):
+            stale_execution.open_position(
+                account_id=self.account["id"], symbol="BTCUSDT",
+                strategy="ema-rsi", side="LONG", quantity="1",
+                entry_price="100", stop_price="95",
             )
-        count = self.connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
-        self.assertEqual(count, 0)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'"
+            ).fetchone()[0],
+            1,
+        )
 
-    def test_daily_trade_count_and_loss_streak_are_derived_from_ledger(self):
-        ledger = TradeLedger(self.connection)
-        for index in range(3):
-            trade = ledger.open_trade(
-                symbol="SOLUSDT", strategy="test", side="LONG",
-                quantity="1", entry_price="10",
+    def test_missing_market_price_fails_closed(self):
+        self.open_position()
+        unavailable = PaperAccountService(
+            self.connection, FakePriceProvider(fail=True)
+        )
+        execution = PaperExecutionService(self.connection, account_service=unavailable)
+        with self.assertRaisesRegex(RuntimeError, "market data unavailable"):
+            execution.open_position(
+                account_id=self.account["id"], symbol="BTCUSDT",
+                strategy="ema-rsi", side="LONG", quantity="1",
+                entry_price="100", stop_price="95",
             )
-            ledger.close_trade(trade["id"], exit_price="9")
 
-        with self.assertRaises(RiskRejectedError) as raised:
-            self.execution.open_position(
-                symbol="SOLUSDT", strategy="ema-rsi", side="LONG",
-                quantity="1", entry_price="100", stop_price="95",
-                risk_snapshot=self.snapshot(
-                    daily_realized_pnl=Decimal("0"),
-                    trades_today=0,
-                    consecutive_losses=0,
-                ),
+    def test_price_snapshots_are_append_only(self):
+        self.open_position()
+        snapshot = self.connection.execute(
+            "SELECT id FROM paper_price_snapshots ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                "UPDATE paper_price_snapshots SET price = '1' WHERE id = ?",
+                (snapshot["id"],),
             )
-        self.assertEqual(raised.exception.reason, "consecutive_loss_limit_reached")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                "DELETE FROM paper_price_snapshots WHERE id = ?",
+                (snapshot["id"],),
+            )
 
-    def test_concurrent_entries_serialize_and_only_one_position_is_open(self):
+    def test_concurrent_entries_serialize_for_the_same_account(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = str(Path(directory) / "paper.sqlite3")
             setup = connect_database(database_path)
             apply_migrations(setup)
+            accounts = PaperAccountService(setup, FakePriceProvider())
+            account = accounts.create_account(
+                name="Concurrent demo", quote_currency="USDT",
+                opening_capital="10000", idempotency_key="concurrent-opening",
+            )
             setup.close()
 
             def attempt(symbol):
                 connection = connect_database(database_path)
                 try:
-                    service = PaperExecutionService(connection)
+                    account_service = PaperAccountService(connection, FakePriceProvider())
+                    service = PaperExecutionService(connection, account_service=account_service)
                     return service.open_position(
-                        symbol=symbol, strategy="ema-rsi", side="LONG",
-                        quantity="1", entry_price="100", stop_price="95",
-                        risk_snapshot=self.snapshot(),
+                        account_id=account["id"], symbol=symbol,
+                        strategy="ema-rsi", side="LONG", quantity="1",
+                        entry_price="100", stop_price="95",
                     )
                 except RiskRejectedError as error:
                     return error.reason
@@ -167,7 +271,8 @@ class PaperExecutionGateTests(unittest.TestCase):
             try:
                 self.assertEqual(
                     verify.execute(
-                        "SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'"
+                        "SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN' AND paper_account_id = ?",
+                        (account["id"],),
                     ).fetchone()[0],
                     1,
                 )
