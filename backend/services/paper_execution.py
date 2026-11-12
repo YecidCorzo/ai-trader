@@ -109,7 +109,7 @@ class PaperExecutionService:
                 self._connection.rollback()
                 raise RiskRejectedError("max_open_positions_reached")
             self._accounts.persist_price_quotes(quotes, now=now)
-            equity = self._accounts.calculate_equity(account_id, quotes=quotes, now=now)
+            equity = self._accounts.calculate_equity(account_id, now=now)
             breaker = CircuitBreaker(self._connection, account_id)
             breaker_halted = breaker.status()["halted"]
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
