@@ -129,6 +129,8 @@ callers; account-based execution always uses the account-scoped breaker.
 
 ## Current security boundary
 
+- The dashboard reports no balance/equity and an unconfigured account until
+  explicit PAPER capital exists; it does not display a fabricated 10,000-unit balance.
 - PAPER only; no real funds, bank integration, exchange credentials or live orders.
 - No HTTP execution/account routes are exposed by this change.
 - Authentication and authorization for multi-user account ownership must be
