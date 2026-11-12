@@ -156,13 +156,41 @@ class PaperExecutionService:
             raise
 
     def close_position(
-        self, trade_id: str, *, exit_price: Decimal | str,
+        self, trade_id: str, *, account_id: str,
         exit_fee: Decimal | str = "0", exit_reason: str | None = None,
     ) -> dict:
-        return self._ledger.close_trade(
-            trade_id, exit_price=exit_price,
-            exit_fee=exit_fee, exit_reason=exit_reason,
+        trade = self._ledger.get_trade(trade_id)
+        if trade is None:
+            raise ValueError("Operación no encontrada")
+        if trade["paper_account_id"] != account_id:
+            raise ValueError("La operación no pertenece a la cuenta PAPER indicada")
+        closing_fee = _non_negative_decimal(exit_fee, "exit_fee")
+        quotes = self._accounts.fetch_open_position_quotes(
+            account_id, additional_symbols=(trade["symbol"],),
         )
+        quote = next(
+            (item for item in quotes if item.symbol == trade["symbol"]),
+            None,
+        )
+        if quote is None:
+            raise ValueError("No hay un precio de mercado actual para cerrar la operación")
+
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            current = self._ledger.get_trade(trade_id)
+            if current is None or current["status"] != "OPEN":
+                raise ValueError("La operación ya está cerrada o no existe")
+            if current["paper_account_id"] != account_id:
+                raise ValueError("La operación no pertenece a la cuenta PAPER indicada")
+            now = datetime.now(timezone.utc)
+            self._accounts.persist_price_quotes(quotes, now=now)
+            return self._ledger.close_trade(
+                trade_id, exit_price=quote.price,
+                exit_fee=closing_fee, exit_reason=exit_reason,
+            )
+        except Exception:
+            self._connection.rollback()
+            raise
 
     def circuit_breaker_status(self, account_id: str) -> dict:
         return CircuitBreaker(self._connection, account_id).status()
