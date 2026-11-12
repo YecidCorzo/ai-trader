@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from backend.infrastructure.database import apply_migrations, connect_database
+from backend.security.principal import VerifiedPrincipal
 from backend.services.paper_account import PaperAccountService, StaleMarketPriceError
 from backend.services.paper_execution import PaperExecutionService
 from backend.services.paper_price import PriceQuote
