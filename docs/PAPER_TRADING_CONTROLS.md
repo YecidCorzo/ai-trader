@@ -132,7 +132,8 @@ callers; account-based execution always uses the account-scoped breaker.
 This release intentionally changes the internal `PaperExecutionService`
 contract. It is a breaking change for callers written against the earlier
 ledger-only service; there is no unsafe compatibility shim for caller-supplied
-fills or risk snapshots.
+fills or risk snapshots. Treat this as a required migration before deploying
+any application code that calls this service.
 
 | Earlier calling pattern | Current contract |
 | --- | --- |
