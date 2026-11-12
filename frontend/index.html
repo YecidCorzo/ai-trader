@@ -471,7 +471,9 @@ setInterval(loadCandles, 60000);
 async function loadSignal() {
   const signalBox = document.getElementById("signal-box");
   const formatPrice = value =>
-    Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "N/D";
+    value == null || value === "" || !Number.isFinite(Number(value))
+      ? "N/D"
+      : Number(value).toFixed(4);
 
   try {
     const response = await fetch("/api/signal/v2");
