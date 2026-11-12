@@ -3,18 +3,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 try:
     from backend.repositories.paper_trading_repository import PaperTradingRepository
     from backend.services.circuit_breaker import CircuitBreaker
+    from backend.services.paper_account import PaperAccountService
     from backend.services.risk_engine import RiskEngine, RiskSnapshot
     from backend.services.trade_ledger import TradeLedger
 except ImportError:  # Support uvicorn with backend/ as the app directory.
     from repositories.paper_trading_repository import PaperTradingRepository
     from services.circuit_breaker import CircuitBreaker
+    from services.paper_account import PaperAccountService
     from services.risk_engine import RiskEngine, RiskSnapshot
     from services.trade_ledger import TradeLedger
 
@@ -46,32 +47,29 @@ def _non_negative_decimal(value: Decimal | str | int, field: str) -> Decimal:
 
 
 class PaperExecutionService:
-    """Validate risk and breaker state before recording a simulated entry.
-
-    The caller supplies the paper-account equity, which has no persisted source
-    in this version. Daily P&L, open positions, daily trade count, consecutive
-    losses and breaker state are derived from SQLite while holding a write lock.
-    """
+    """Validate risk from a persisted PAPER account before recording an entry."""
 
     def __init__(
         self,
         connection: sqlite3.Connection,
         risk_engine: RiskEngine | None = None,
+        account_service: PaperAccountService | None = None,
     ) -> None:
         self._connection = connection
         self._repository = PaperTradingRepository(connection)
         self._ledger = TradeLedger(connection)
         self._breaker = CircuitBreaker(connection)
         self._risk_engine = risk_engine or RiskEngine()
+        self._accounts = account_service or PaperAccountService(connection)
 
     def open_position(
-        self, *, symbol: str, strategy: str, side: str,
+        self, *, account_id: str, symbol: str, strategy: str, side: str,
         quantity: Decimal | str, entry_price: Decimal | str,
-        stop_price: Decimal | str, risk_snapshot: RiskSnapshot,
-        entry_fee: Decimal | str = "0",
-        estimated_exit_fee: Decimal | str = "0",
-        metadata: dict | None = None,
+        stop_price: Decimal | str, entry_fee: Decimal | str = "0",
+        estimated_exit_fee: Decimal | str = "0", metadata: dict | None = None,
     ) -> dict:
+        if not account_id or not account_id.strip():
+            raise ValueError("account_id es obligatorio")
         side = side.strip().upper()
         if side not in {"LONG", "SHORT"}:
             raise ValueError("side debe ser LONG o SHORT")
@@ -87,24 +85,29 @@ class PaperExecutionService:
             raise ValueError("El stop de SHORT debe estar por encima de la entrada")
 
         planned_loss = abs(entry - stop) * qty + opening_fee + exit_fee
+        # Network I/O happens before acquiring SQLite's write lock. The quotes
+        # are checked again for age and persisted inside the atomic risk transaction.
+        quotes = self._accounts.fetch_open_position_quotes(account_id)
 
         try:
-            # Serialize concurrent entry checks against the same SQLite file.
             self._connection.execute("BEGIN IMMEDIATE")
-            breaker_halted = self._breaker.status()["halted"]
             now = datetime.now(timezone.utc)
+            self._accounts.persist_price_quotes(quotes, now=now)
+            equity = self._accounts.calculate_equity(account_id, quotes=quotes, now=now)
+            breaker_halted = self._breaker.status()["halted"]
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
             metrics = self._repository.risk_metrics(
                 day_start=day_start.isoformat(timespec="seconds").replace("+00:00", "Z"),
                 day_end=day_end.isoformat(timespec="seconds").replace("+00:00", "Z"),
                 loss_streak_limit=self._risk_engine.limits.max_consecutive_losses,
+                account_id=account_id,
             )
-            snapshot = replace(
-                risk_snapshot,
+            snapshot = RiskSnapshot(
+                equity=equity,
                 planned_loss=planned_loss,
                 daily_realized_pnl=metrics["daily_realized_pnl"],
-                open_positions=self._repository.count_open_trades(),
+                open_positions=self._repository.count_open_trades(account_id),
                 trades_today=metrics["trades_today"],
                 consecutive_losses=metrics["consecutive_losses"],
                 circuit_breaker_halted=breaker_halted,
@@ -123,18 +126,16 @@ class PaperExecutionService:
             trade_metadata = dict(metadata or {})
             trade_metadata.update({
                 "mode": "paper",
+                "paper_account_id": account_id,
                 "stop_price": str(stop),
                 "planned_loss": str(planned_loss),
                 "risk_ratio": str(decision.risk_ratio),
+                "equity_source": "persisted_paper_account",
             })
             return self._ledger.open_trade(
-                symbol=symbol,
-                strategy=strategy,
-                side=side,
-                quantity=qty,
-                entry_price=entry,
-                entry_fee=opening_fee,
-                metadata=trade_metadata,
+                symbol=symbol, strategy=strategy, side=side,
+                quantity=qty, entry_price=entry, entry_fee=opening_fee,
+                metadata=trade_metadata, paper_account_id=account_id,
             )
         except RiskRejectedError:
             raise
