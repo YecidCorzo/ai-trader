@@ -132,6 +132,20 @@ class PaperExecutionGateTests(unittest.TestCase):
         other = self.open_position(account_id=second["id"])
         self.assertEqual(other["paper_account_id"], second["id"])
 
+    def test_circuit_breaker_is_isolated_per_paper_account(self):
+        second = self.accounts.create_account(
+            name="Independent demo", quote_currency="USDT",
+            opening_capital="10000", idempotency_key="independent-opening",
+        )
+        self.execution.halt(self.account["id"], "operator requested stop")
+        self.assertTrue(self.execution.circuit_breaker_status(self.account["id"])["halted"])
+        self.assertFalse(self.execution.circuit_breaker_status(second["id"])["halted"])
+        trade = self.open_position(account_id=second["id"])
+        self.assertEqual(trade["paper_account_id"], second["id"])
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position()
+        self.assertEqual(raised.exception.reason, "circuit_breaker_halted")
+
     def test_daily_loss_is_derived_from_account_trade_ledger(self):
         prior = self.execution.open_position(
             account_id=self.account["id"], symbol="SOLUSDT",
@@ -144,7 +158,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         with self.assertRaises(RiskRejectedError) as raised:
             self.open_position()
         self.assertEqual(raised.exception.reason, "daily_loss_limit_reached")
-        self.assertTrue(self.execution.circuit_breaker_status()["halted"])
+        self.assertTrue(self.execution.circuit_breaker_status(self.account["id"])["halted"])
 
     def test_trade_realized_pnl_is_booked_once_with_trade_close(self):
         trade = self.open_position()
