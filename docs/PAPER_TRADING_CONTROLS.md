@@ -76,17 +76,18 @@ trade = execution.open_position(
     strategy="ema-rsi",
     side="LONG",
     quantity="1",
-    entry_price="100",
     stop_price="95",
     entry_fee="0.1",
     estimated_exit_fee="0.1",
 )
 ```
 
-The execution service does not accept caller-supplied equity or a caller-built
-risk snapshot. It derives equity from the selected persisted PAPER account,
-fresh price snapshots, and account-scoped trade history while holding a SQLite
-write lock. Account IDs scope open positions, daily trade counts, realized
+The execution service does not accept caller-supplied equity, entry price or a
+caller-built risk snapshot. The simulated entry fill is taken from a fresh
+public market quote; the stop and quantity are validated against that fill.
+It derives equity from the selected persisted PAPER account, fresh price
+snapshots, and account-scoped trade history while holding a SQLite write lock.
+Account IDs scope open positions, daily trade counts, realized
 daily P&L and loss streaks. Concurrent entry checks serialize per database;
 a failed risk check creates no trade.
 
