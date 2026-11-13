@@ -29,7 +29,9 @@ jobs:
         run: python -m pip check
       - name: Compile backend and tests
         run: python -m compileall -q backend tests
-      - name: Run unit tests
+      - name: Run complete pytest suite
+        run: pytest -q
+      - name: Run complete unittest suite
         env:
           PYTHONPATH: backend
         run: python -m unittest discover -s tests -v
