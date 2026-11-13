@@ -27,7 +27,7 @@ def _utc_timestamp(value: datetime | None) -> str:
     value = value or datetime.now(timezone.utc)
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("La fecha debe incluir zona horaria")
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 class TradeLedger:
@@ -41,7 +41,7 @@ class TradeLedger:
         self, *, symbol: str, strategy: str, side: str,
         quantity: Decimal | str, entry_price: Decimal | str,
         entry_fee: Decimal | str = "0", opened_at: datetime | None = None,
-        metadata: dict | None = None,
+        metadata: dict | None = None, paper_account_id: str | None = None,
     ) -> dict:
         symbol = symbol.strip().upper()
         strategy = strategy.strip()
@@ -56,26 +56,19 @@ class TradeLedger:
         timestamp = _utc_timestamp(opened_at)
         trade_id = str(uuid4())
         event_details = {
-            "mode": "paper",
-            "symbol": symbol,
-            "side": side,
-            "quantity": str(qty),
-            "entry_price": str(price),
-            "entry_fee": str(fee),
+            "mode": "paper", "symbol": symbol, "side": side,
+            "quantity": str(qty), "entry_price": str(price),
+            "entry_fee": str(fee), "paper_account_id": paper_account_id,
         }
         try:
             self._repository.create_trade({
-                "id": trade_id,
-                "event_id": str(uuid4()),
-                "symbol": symbol,
-                "strategy": strategy,
-                "side": side,
-                "quantity": str(qty),
-                "entry_price": str(price),
-                "entry_fee": str(fee),
-                "opened_at": timestamp,
+                "id": trade_id, "event_id": str(uuid4()),
+                "symbol": symbol, "strategy": strategy, "side": side,
+                "quantity": str(qty), "entry_price": str(price),
+                "entry_fee": str(fee), "opened_at": timestamp,
                 "metadata_json": json.dumps(metadata or {}, sort_keys=True),
                 "event_details_json": json.dumps(event_details, sort_keys=True),
+                "paper_account_id": paper_account_id,
             })
             self._connection.commit()
         except Exception:
@@ -107,26 +100,36 @@ class TradeLedger:
         realized = gross_pnl - entry_fee - fee
         timestamp = _utc_timestamp(closed_at)
         details = {
-            "mode": "paper",
-            "exit_price": str(price),
-            "exit_fee": str(fee),
-            "gross_pnl": str(gross_pnl),
-            "realized_pnl": str(realized),
-            "exit_reason": exit_reason,
+            "mode": "paper", "exit_price": str(price),
+            "exit_fee": str(fee), "gross_pnl": str(gross_pnl),
+            "realized_pnl": str(realized), "exit_reason": exit_reason,
         }
         try:
             updated = self._repository.close_trade(
-                trade_id=trade_id,
-                exit_price=str(price),
-                exit_fee=str(fee),
-                realized_pnl=str(realized),
-                closed_at=timestamp,
-                exit_reason=exit_reason,
-                event_id=str(uuid4()),
+                trade_id=trade_id, exit_price=str(price), exit_fee=str(fee),
+                realized_pnl=str(realized), closed_at=timestamp,
+                exit_reason=exit_reason, event_id=str(uuid4()),
                 event_details_json=json.dumps(details, sort_keys=True),
             )
             if not updated:
                 raise ValueError("La operación ya fue cerrada")
+            if trade["paper_account_id"] is not None:
+                # Net realized P&L (both entry and exit fees included) is booked
+                # atomically with the trade close and its immutable audit event.
+                self._connection.execute(
+                    """INSERT INTO paper_account_events
+                       (id, account_id, event_type, amount, currency_code,
+                        idempotency_key, reference_id, occurred_at)
+                       SELECT ?, account.id, 'TRADE_REALIZED_PNL', ?, account.quote_currency,
+                              ?, ?, ?
+                       FROM paper_accounts AS account WHERE account.id = ?""",
+                    (
+                        str(uuid4()), str(realized), f"trade-close:{trade_id}",
+                        trade_id, timestamp, trade["paper_account_id"],
+                    ),
+                )
+                if self._connection.execute("SELECT changes()").fetchone()[0] != 1:
+                    raise ValueError("No se pudo contabilizar el P&L de la cuenta PAPER")
             self._connection.commit()
         except Exception:
             self._connection.rollback()
