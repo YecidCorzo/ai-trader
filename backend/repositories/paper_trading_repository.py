@@ -131,16 +131,27 @@ class PaperTradingRepository:
             (Decimal(row["realized_pnl"]) for row in closed_today),
             Decimal("0"),
         )
+        reset = None
+        if account_id is not None:
+            reset = self._connection.execute(
+                """SELECT sequence FROM paper_trade_events
+                   WHERE event_type = 'CIRCUIT_BREAKER_RESET'
+                     AND json_extract(details_json, '$.account_id') = ?
+                   ORDER BY sequence DESC LIMIT 1""",
+                (account_id,),
+            ).fetchone()
+        reset_clause = " AND event.sequence > ?" if reset is not None else ""
+        reset_params = (reset["sequence"],) if reset is not None else ()
         recent_closed = self._all(
             """SELECT trade.realized_pnl
                FROM paper_trades AS trade
                JOIN paper_trade_events AS event
                  ON event.trade_id = trade.id
                 AND event.event_type = 'TRADE_CLOSED'
-               WHERE trade.status = 'CLOSED'""" + account_clause + """
+               WHERE trade.status = 'CLOSED'""" + account_clause + reset_clause + """
                ORDER BY event.sequence DESC
                LIMIT ?""",
-            (*account_params, loss_streak_limit),
+            (*account_params, *reset_params, loss_streak_limit),
         )
         consecutive_losses = 0
         for row in recent_closed:
