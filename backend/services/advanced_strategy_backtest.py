@@ -8,7 +8,7 @@ try:
     from backend.services.backtest_service import BacktestService
     from backend.indicators.rsi import calculate_rsi_series
     from backend.indicators.macd import calculate_macd
-    from backend.indicators.vwap import calculate_vwap
+    from backend.indicators.vwap import utc_day_key
     from backend.indicators.atr import calculate_atr
     from backend.indicators.ema import calculate_ema
 except ImportError:
@@ -16,7 +16,7 @@ except ImportError:
     from services.backtest_service import BacktestService
     from indicators.rsi import calculate_rsi_series
     from indicators.macd import calculate_macd
-    from indicators.vwap import calculate_vwap
+    from indicators.vwap import utc_day_key
     from indicators.atr import calculate_atr
     from indicators.ema import calculate_ema
 
@@ -86,9 +86,15 @@ class AdvancedStrategyBacktestService:
         macd_histogram = [line - signal for line, signal in zip(macd_line, macd_signal)]
 
         vwap = []
+        current_utc_day = None
         cumulative_pv = 0.0
         cumulative_volume = 0.0
         for candle in candles:
+            candle_day = utc_day_key(candle["time"])
+            if candle_day != current_utc_day:
+                current_utc_day = candle_day
+                cumulative_pv = 0.0
+                cumulative_volume = 0.0
             volume = candle["volume"]
             typical = (candle["high"] + candle["low"] + candle["close"]) / 3.0
             cumulative_pv += typical * volume
