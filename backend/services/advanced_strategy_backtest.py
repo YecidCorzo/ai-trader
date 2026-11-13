@@ -3,8 +3,22 @@ from __future__ import annotations
 
 import math
 
-from backend.strategies.advanced_strategy import AdvancedStrategy
-from backend.services.backtest_service import BacktestService
+try:
+    from backend.strategies.advanced_strategy import AdvancedStrategy
+    from backend.services.backtest_service import BacktestService
+    from backend.indicators.rsi import calculate_rsi_series
+    from backend.indicators.macd import calculate_macd
+    from backend.indicators.vwap import calculate_vwap
+    from backend.indicators.atr import calculate_atr
+    from backend.indicators.ema import calculate_ema
+except ImportError:
+    from strategies.advanced_strategy import AdvancedStrategy
+    from services.backtest_service import BacktestService
+    from indicators.rsi import calculate_rsi_series
+    from indicators.macd import calculate_macd
+    from indicators.vwap import calculate_vwap
+    from indicators.atr import calculate_atr
+    from indicators.ema import calculate_ema
 
 
 class AdvancedStrategyBacktestService:
@@ -63,7 +77,6 @@ class AdvancedStrategyBacktestService:
         ema_fast = cls._ema_series(closes, 9)
         ema_slow = cls._ema_series(closes, 21)
         ema_trend = cls._ema_series(closes, 50)
-        from backend.indicators.rsi import calculate_rsi_series
         rsi = calculate_rsi_series(closes, 14)
 
         macd_fast = cls._ema_series(closes, 12)
@@ -157,7 +170,7 @@ class AdvancedStrategyBacktestService:
                 index += 1
                 continue
             signal = self.strategy.evaluate(
-                candles=candles[:index + 1],
+                candles=candles[max(0, index - 5):index + 1],
                 ema_fast=indicators["ema_fast"][index],
                 ema_slow=indicators["ema_slow"][index],
                 ema_trend=indicators["ema_trend"][index],
