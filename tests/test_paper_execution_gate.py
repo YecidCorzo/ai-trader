@@ -118,6 +118,7 @@ class PaperExecutionGateTests(unittest.TestCase):
                 account_id=self.account["id"], symbol="SOLUSDT",
                 strategy="ema-rsi", side="LONG", quantity="1",
                 stop_price="95",
+                principal=self.principal, idempotency_key="risk-snapshot-test",
                 risk_snapshot={"equity": "999999999"},
             )
 
@@ -198,6 +199,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             strategy="test", side="LONG", quantity="10",
             stop_price="99",
             entry_fee="0", estimated_exit_fee="0",
+            principal=self.principal, idempotency_key="daily-loss-entry",
         )
         self.provider.price = Decimal("70")
         self.execution.close_position(prior["id"], account_id=self.account["id"], principal=self.principal)
@@ -228,7 +230,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         trade = self.open_position()
         with self.assertRaises(TypeError):
             self.execution.close_position(
-                trade["id"], account_id=self.account["id"], exit_price="999999"
+                trade["id"], account_id=self.account["id"], exit_price="999999", principal=self.principal
             )
         other = self.accounts.create_account(
             name="Not owner", quote_currency="USDT",
@@ -236,7 +238,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             principal=self.principal,
         )
         with self.assertRaisesRegex(ValueError, "no pertenece"):
-            self.execution.close_position(trade["id"], account_id=other["id"])
+            self.execution.close_position(trade["id"], account_id=other["id"], principal=self.principal)
 
     def test_close_rolls_back_trade_if_account_event_cannot_be_written(self):
         trade = self.open_position()
@@ -320,7 +322,8 @@ class PaperExecutionGateTests(unittest.TestCase):
             stale_execution.open_position(
                 account_id=self.account["id"], symbol="BTCUSDT",
                 strategy="ema-rsi", side="LONG", quantity="1",
-                stop_price="95",
+                stop_price="95", principal=self.principal,
+                idempotency_key="stale-entry",
             )
         self.assertEqual(
             self.connection.execute(
@@ -339,7 +342,8 @@ class PaperExecutionGateTests(unittest.TestCase):
             execution.open_position(
                 account_id=self.account["id"], symbol="BTCUSDT",
                 strategy="ema-rsi", side="LONG", quantity="1",
-                stop_price="95",
+                stop_price="95", principal=self.principal,
+                idempotency_key="unavailable-entry",
             )
 
     def test_price_snapshots_are_append_only(self):
@@ -379,7 +383,8 @@ class PaperExecutionGateTests(unittest.TestCase):
                     return service.open_position(
                         account_id=account["id"], symbol=symbol,
                         strategy="ema-rsi", side="LONG", quantity="1",
-                        stop_price="95",
+                        stop_price="95", principal=self.principal,
+                        idempotency_key=f"concurrent-{symbol}",
                     )
                 except RiskRejectedError as error:
                     return error.reason
@@ -464,7 +469,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.provider.price = Decimal("100")
             trade = self.open_position(entry_fee="0", estimated_exit_fee="0")
             self.provider.price = Decimal("99")
-            self.execution.close_position(trade["id"], account_id=self.account["id"])
+            self.execution.close_position(trade["id"], account_id=self.account["id"], principal=self.principal)
             halted = self.execution.circuit_breaker_status(self.account["id"])["halted"]
             self.assertEqual(halted, index == 2)
 
