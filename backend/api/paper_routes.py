@@ -38,7 +38,11 @@ except ImportError:
     from services.paper_price import BinancePublicPriceProvider
 
 
-router = APIRouter(prefix="/api/paper", tags=["PAPER accounts"])
+router = APIRouter(
+    prefix="/api/paper",
+    tags=["PAPER accounts"],
+    dependencies=[Depends(get_verified_principal)],
+)
 
 
 class CreatePaperAccountRequest(BaseModel):
