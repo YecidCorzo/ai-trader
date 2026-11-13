@@ -77,6 +77,11 @@ class AdvancedStrategyBacktestService:
         ema_fast = cls._ema_series(closes, 9)
         ema_slow = cls._ema_series(closes, 21)
         ema_trend = cls._ema_series(closes, 50)
+        ema_trend_slope = [None] * len(ema_trend)
+        for index in range(5, len(ema_trend)):
+            previous = ema_trend[index - 5]
+            if previous:
+                ema_trend_slope[index] = (ema_trend[index] - previous) / previous
         rsi = calculate_rsi_series(closes, 14)
 
         macd_fast = cls._ema_series(closes, 12)
@@ -105,6 +110,7 @@ class AdvancedStrategyBacktestService:
             "ema_fast": ema_fast,
             "ema_slow": ema_slow,
             "ema_trend": ema_trend,
+            "ema_trend_slope": ema_trend_slope,
             "rsi": rsi,
             "macd_histogram": macd_histogram,
             "vwap": vwap,
@@ -176,10 +182,11 @@ class AdvancedStrategyBacktestService:
                 index += 1
                 continue
             signal = self.strategy.evaluate(
-                candles=candles[max(0, index - 5):index + 1],
+                candles=candles[max(0, index - 19):index + 1],
                 ema_fast=indicators["ema_fast"][index],
                 ema_slow=indicators["ema_slow"][index],
                 ema_trend=indicators["ema_trend"][index],
+                ema_trend_slope=indicators["ema_trend_slope"][index],
                 rsi=rsi,
                 macd={"histogram": indicators["macd_histogram"][index]},
                 vwap=indicators["vwap"][index],
