@@ -53,6 +53,11 @@ def _non_negative_decimal(value: Decimal | str | int, field: str) -> Decimal:
 
 # Quote assets supported by Binance spot symbols. Matching is exact: we do not
 # infer an account currency from an arbitrary suffix or apply implicit FX.
+PAPER_FEE_RATE = Decimal("0.001")
+PAPER_SLIPPAGE_RATE = Decimal("0.0005")
+PAPER_MAX_RISK_FRACTION = Decimal("0.01")
+
+
 _BINANCE_QUOTE_ASSETS = frozenset({
     "USDT", "USDC", "FDUSD", "TUSD", "BUSD", "BTC", "ETH", "BNB",
     "EUR", "TRY", "BRL", "GBP", "AUD", "BIDR", "DAI", "UAH",
@@ -130,9 +135,9 @@ class PaperExecutionService:
         stop = _positive_decimal(stop_price, "stop_price")
         requested_entry_fee = _non_negative_decimal(entry_fee, "entry_fee")
         requested_exit_fee = _non_negative_decimal(estimated_exit_fee, "estimated_exit_fee")
-        risk_cap = self._risk_engine.limits.max_risk_per_trade
+        risk_cap = min(self._risk_engine.limits.max_risk_per_trade, PAPER_MAX_RISK_FRACTION)
         requested_risk = risk_cap if risk_fraction is None else _positive_decimal(risk_fraction, "risk_fraction")
-        if requested_risk > risk_cap or requested_risk > Decimal("0.01"):
+        if requested_risk > risk_cap or requested_risk > PAPER_MAX_RISK_FRACTION:
             raise RiskRejectedError("risk_fraction_exceeds_engine_limit")
 
         def matches_request(existing_row) -> bool:
@@ -172,8 +177,8 @@ class PaperExecutionService:
         if entry_quote is None:
             raise ValueError("No hay un precio de mercado actual para el símbolo")
         quote_price = _positive_decimal(entry_quote.price, "market_entry_quote")
-        slippage_rate = Decimal("0.0005")
-        fee_rate = Decimal("0.001")
+        slippage_rate = PAPER_SLIPPAGE_RATE
+        fee_rate = PAPER_FEE_RATE
         entry = quote_price * (
             Decimal("1") + slippage_rate if side == "LONG"
             else Decimal("1") - slippage_rate
@@ -357,8 +362,8 @@ class PaperExecutionService:
             now = datetime.now(timezone.utc)
             self._accounts.persist_price_quotes([quote], now=now)
             quote_price = _positive_decimal(quote.price, "market_exit_quote")
-            slippage_rate = Decimal("0.0005")
-            fee_rate = Decimal("0.001")
+            slippage_rate = PAPER_SLIPPAGE_RATE
+            fee_rate = PAPER_FEE_RATE
             fill_price = quote_price * (
                 Decimal("1") - slippage_rate if current["side"] == "LONG"
                 else Decimal("1") + slippage_rate
