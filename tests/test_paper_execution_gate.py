@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -484,6 +485,40 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.assertEqual(metrics["consecutive_losses"], 0)
         reopened = self.open_position(entry_fee="0", estimated_exit_fee="0")
         self.assertEqual(reopened["status"], "OPEN")
+
+    def test_open_idempotency_key_returns_same_trade_and_rejects_conflicting_reuse(self):
+        first = self.open_position(idempotency_key="stable-open-request")
+        repeated = self.open_position(idempotency_key="stable-open-request")
+        self.assertEqual(repeated["id"], first["id"])
+        self.assertEqual(repeated["idempotency_key"], "stable-open-request")
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position(idempotency_key="stable-open-request", quantity="2")
+        self.assertEqual(raised.exception.reason, "idempotency_key_conflict")
+        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE paper_account_id = ?", (self.account["id"],)).fetchone()[0], 1)
+
+    def test_verified_actor_is_persisted_on_open_close_halt_and_reset(self):
+        trade = self.open_position(idempotency_key="actor-audit-open")
+        opened = self.connection.execute(
+            "SELECT details_json FROM paper_trade_events WHERE trade_id = ? AND event_type = 'TRADE_OPENED'",
+            (trade["id"],),
+        ).fetchone()
+        expected_actor = {"type": "verified_principal", "issuer": self.principal.issuer, "subject": self.principal.subject}
+        self.assertEqual(json.loads(opened["details_json"])["actor"], expected_actor)
+        self.provider.price = Decimal("101")
+        self.execution.close_position(trade["id"], account_id=self.account["id"], principal=self.principal)
+        closed = self.connection.execute(
+            "SELECT details_json FROM paper_trade_events WHERE trade_id = ? AND event_type = 'TRADE_CLOSED'",
+            (trade["id"],),
+        ).fetchone()
+        self.assertEqual(json.loads(closed["details_json"])["actor"], expected_actor)
+        self.execution.halt(self.account["id"], "audit test", principal=self.principal)
+        self.execution.reset_circuit_breaker(self.account["id"], principal=self.principal)
+        control_events = self.connection.execute(
+            "SELECT event_type, details_json FROM paper_trade_events WHERE trade_id IS NULL ORDER BY sequence DESC LIMIT 2"
+        ).fetchall()
+        self.assertEqual({row["event_type"] for row in control_events}, {"CIRCUIT_BREAKER_HALTED", "CIRCUIT_BREAKER_RESET"})
+        for event in control_events:
+            self.assertEqual(json.loads(event["details_json"])["actor"], expected_actor)
 
 if __name__ == "__main__":
     unittest.main()
