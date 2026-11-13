@@ -7,7 +7,10 @@ from dataclasses import dataclass
 import jwt
 from jwt import PyJWKClient, PyJWKClientError, PyJWTError
 
-from backend.security.principal import VerifiedPrincipal
+try:
+    from backend.security.principal import VerifiedPrincipal
+except ImportError:
+    from security.principal import VerifiedPrincipal
 
 
 class OIDCConfigurationError(ValueError):
