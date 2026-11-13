@@ -237,7 +237,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             opening_capital="10000", idempotency_key="not-owner",
             principal=self.principal,
         )
-        with self.assertRaisesRegex(ValueError, "no pertenece"):
+        with self.assertRaisesRegex(ValueError, "no encontrado"):
             self.execution.close_position(trade["id"], account_id=other["id"], principal=self.principal)
 
     def test_close_rolls_back_trade_if_account_event_cannot_be_written(self):
