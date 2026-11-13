@@ -405,23 +405,33 @@ class PaperExecutionService:
         return CircuitBreaker(self._connection, account_id).status()
 
     def halt(
-        self, account_id: str, reason: str, *, principal: VerifiedPrincipal,
+        self, account_id: str, reason: str, *, principal: VerifiedPrincipal | None = None,
     ) -> dict:
-        if not isinstance(principal, VerifiedPrincipal):
-            raise ValueError("Se requiere un principal verificado para detener PAPER")
-        self._authorization.require_account(principal, account_id)
-        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        if principal is None:
+            actor = {"type": "system", "name": "paper_execution_service"}
+            updated_by = "paper_execution_service"
+        elif isinstance(principal, VerifiedPrincipal):
+            self._authorization.require_account(principal, account_id)
+            actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+            updated_by = principal.subject
+        else:
+            raise ValueError("El principal debe estar verificado")
         return CircuitBreaker(self._connection, account_id).halt(
-            reason, updated_by=principal.subject, actor=actor,
+            reason, updated_by=updated_by, actor=actor,
         )
 
     def reset_circuit_breaker(
-        self, account_id: str, *, principal: VerifiedPrincipal,
+        self, account_id: str, *, principal: VerifiedPrincipal | None = None,
     ) -> dict:
-        if not isinstance(principal, VerifiedPrincipal):
-            raise ValueError("Se requiere un principal verificado para rearmar PAPER")
-        self._authorization.require_account(principal, account_id)
-        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        if principal is None:
+            actor = {"type": "system", "name": "paper_execution_service"}
+            confirmed_by = "paper_execution_service"
+        elif isinstance(principal, VerifiedPrincipal):
+            self._authorization.require_account(principal, account_id)
+            actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+            confirmed_by = principal.subject
+        else:
+            raise ValueError("El principal debe estar verificado")
         return CircuitBreaker(self._connection, account_id).reset(
-            confirmed_by=principal.subject, actor=actor,
+            confirmed_by=confirmed_by, actor=actor,
         )
