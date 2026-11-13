@@ -47,3 +47,5 @@ account/trade lookup primitives are implemented, but no production identity
 provider is configured and no HTTP account/execution routes are enabled. A
 real verifier and its expiry, audience, issuer and revocation tests remain a
 gate before any such routes can be added.
+
+Migration `0009_paper_trade_idempotency.sql` adds an account-scoped unique idempotency key to new PAPER trades. Open, close and breaker audit events persist the verified issuer/subject actor; internal stop and risk actions are labeled as system actors.
