@@ -57,11 +57,11 @@ class PaperLedgerIntegrityTests(unittest.TestCase):
     def test_monetary_values_use_eight_decimal_half_even_rounding(self):
         trade = self.ledger.open_trade(
             symbol="SOLUSDT", strategy="rounding", side="LONG",
-            quantity="1", entry_price="100", entry_fee="0",
+            quantity="0.00000003", entry_price="1.00000000", entry_fee="0",
             paper_account_id=self.account["id"],
         )
         closed = self.ledger.close_trade(
-            trade["id"], exit_price="100.000000015", exit_fee="0"
+            trade["id"], exit_price="1.50000000", exit_fee="0"
         )
         self.assertEqual(closed["realized_pnl"], "0.00000002")
 
@@ -160,6 +160,24 @@ class PaperLedgerIntegrityTests(unittest.TestCase):
                              values["entry_price"], values["entry_fee"],
                              self.account["id"]),
                         )
+
+    def test_trade_sql_trigger_rejects_excess_precision_and_leading_zeroes(self):
+        invalid_values = [
+            ("1.000000001", "100", "0"),
+            ("1", "01.25", "0"),
+            ("1", "100", "0.000000001"),
+        ]
+        for index, values in enumerate(invalid_values):
+            with self.subTest(values=values):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.connection.execute(
+                        """INSERT INTO paper_trades
+                           (id, symbol, strategy, side, quantity, entry_price, entry_fee,
+                            status, opened_at, metadata_json, paper_account_id)
+                           VALUES (?, 'SOLUSDT', 'precision', 'LONG', ?, ?, ?,
+                                   'OPEN', '2026-11-13T10:00:00.000000Z', '{}', ?)""",
+                        (f"sql-precision-{index}", *values, self.account["id"]),
+                    )
 
     def test_trade_ledger_limits_decimals_and_normalizes_leading_zeroes(self):
         with self.assertRaisesRegex(ValueError, "8 decimales"):
