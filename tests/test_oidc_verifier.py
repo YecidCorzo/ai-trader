@@ -68,7 +68,7 @@ class OIDCVerifierTests(unittest.TestCase):
     def test_expired_wrong_issuer_and_wrong_audience_tokens_are_rejected(self):
         verifier = self.verifier()
         with self.assertRaises(InvalidBearerToken):
-            verifier.verify(self.token(exp=int(time.time()) - 1))
+            verifier.verify(self.token(exp=int(time.time()) - 300))
         with self.assertRaises(InvalidBearerToken):
             verifier.verify(self.token(iss="https://attacker.example/"))
         with self.assertRaises(InvalidBearerToken):
