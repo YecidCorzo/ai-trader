@@ -56,6 +56,8 @@ class AdvancedStrategyBacktestTests(unittest.TestCase):
         self.assertAlmostEqual(values["ema_fast"][-1], calculate_ema(closes, 9), places=10)
         self.assertAlmostEqual(values["ema_slow"][-1], calculate_ema(closes, 21), places=10)
         self.assertAlmostEqual(values["ema_trend"][-1], calculate_ema(closes, 50), places=10)
+        expected_slope = (values["ema_trend"][-1] - values["ema_trend"][-6]) / values["ema_trend"][-6]
+        self.assertAlmostEqual(values["ema_trend_slope"][-1], expected_slope, places=12)
         self.assertAlmostEqual(values["rsi"][-1], calculate_rsi_series(closes, 14)[-1], places=10)
         self.assertAlmostEqual(values["macd_histogram"][-1], calculate_macd(closes)["histogram"], places=10)
         self.assertAlmostEqual(values["vwap"][-1], calculate_vwap(rows), places=10)
