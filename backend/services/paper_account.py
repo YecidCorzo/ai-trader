@@ -1,12 +1,17 @@
 """Persistent capital ledger and fail-closed PAPER mark-to-market equity."""
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from uuid import uuid4
 
+from backend.security.principal import VerifiedPrincipal
 from backend.services.paper_price import BinancePublicPriceProvider, PriceQuote
+
+
+MONEY_QUANTUM = Decimal("0.00000001")
 
 
 class PaperAccountError(ValueError):
@@ -33,6 +38,14 @@ def _money(value: Decimal | str | int, field: str, *, allow_negative: bool = Fal
         or (amount < 0 and not allow_negative)
     ):
         raise PaperAccountError(f"{field} debe ser finito y {'no cero' if allow_negative else 'positivo'}")
+    if max(0, -amount.as_tuple().exponent) > 8:
+        raise PaperAccountError(f"{field} supera 8 decimales")
+    try:
+        amount = amount.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_EVEN)
+    except InvalidOperation:
+        raise PaperAccountError(f"{field} no puede representarse con 8 decimales") from None
+    if amount == 0:
+        raise PaperAccountError(f"{field} se redondea a cero")
     return amount
 
 
@@ -45,6 +58,16 @@ def _utc(value: datetime | None = None) -> datetime:
 
 def _timestamp(value: datetime) -> str:
     return _utc(value).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _owner_scoped_creation_key(principal: VerifiedPrincipal, key: str) -> str:
+    """Store a deterministic opaque key scoped to the verified owner."""
+    material = (
+        f"{len(principal.issuer)}:{principal.issuer}"
+        f"{len(principal.subject)}:{principal.subject}"
+        f"{len(key)}:{key}"
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 class PaperAccountService:
@@ -67,6 +90,7 @@ class PaperAccountService:
         self, *, name: str, quote_currency: str,
         opening_capital: Decimal | str | int,
         idempotency_key: str,
+        principal: VerifiedPrincipal,
         account_id: str | None = None,
         created_at: datetime | None = None,
     ) -> dict:
@@ -78,14 +102,15 @@ class PaperAccountService:
             raise PaperAccountError("name e idempotency_key son obligatorios")
         if not 3 <= len(currency) <= 8 or not currency.isalnum():
             raise PaperAccountError("quote_currency inválida")
+        creation_key = _owner_scoped_creation_key(principal, key)
         identifier = account_id or str(uuid4())
         now = _timestamp(created_at)
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             existing = self._connection.execute(
-                """SELECT id, name, quote_currency FROM paper_accounts
+                """SELECT id, name, quote_currency, owner_issuer, owner_subject FROM paper_accounts
                    WHERE creation_key = ?""",
-                (key,),
+                (creation_key,),
             ).fetchone()
             if existing is not None:
                 opening = self._connection.execute(
@@ -94,7 +119,9 @@ class PaperAccountService:
                     (existing["id"],),
                 ).fetchone()
                 if (
-                    existing["name"] != name
+                    existing["owner_issuer"] != principal.issuer
+                    or existing["owner_subject"] != principal.subject
+                    or existing["name"] != name
                     or existing["quote_currency"] != currency
                     or opening is None
                     or Decimal(opening["amount"]) != amount
@@ -107,9 +134,11 @@ class PaperAccountService:
                 return self.get_account(identifier)
             self._connection.execute(
                 """INSERT INTO paper_accounts
-                   (id, name, quote_currency, creation_key, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (identifier, name, currency, key, now),
+                   (id, name, quote_currency, creation_key, created_at,
+                    owner_issuer, owner_subject)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (identifier, name, currency, creation_key, now,
+                 principal.issuer, principal.subject),
             )
             self._connection.execute(
                 """INSERT INTO paper_account_risk_controls

@@ -39,6 +39,8 @@ def connect_database(path: str | Path | None = None) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
+    if not is_memory:
+        connection.execute("PRAGMA journal_mode = WAL")
     return connection
 
 
