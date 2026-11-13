@@ -30,7 +30,7 @@ class AdvancedStrategyCategoryConfirmationTests(unittest.TestCase):
     def candles():
         prior = {"high": 100.0, "low": 98.0, "close": 99.0, "volume": 10.0}
         last = {"high": 101.0, "low": 99.0, "close": 100.5, "volume": 10.0}
-        return [dict(prior) for _ in range(5)] + [last]
+        return [dict(prior) for _ in range(19)] + [last]
 
     def test_long_requires_trend_momentum_and_volume_categories(self):
         strategy = AdvancedStrategy()
@@ -38,6 +38,7 @@ class AdvancedStrategyCategoryConfirmationTests(unittest.TestCase):
             candles=self.candles(),
             ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
             rsi=60.0, macd={"histogram": 1.0}, vwap=None, atr=2.0,
+            ema_trend_slope=0.001,
         )
         self.assertEqual(missing_volume["signal"], "NEUTRAL")
         self.assertTrue(missing_volume["category_confirmations"]["long"]["trend"])
@@ -48,6 +49,7 @@ class AdvancedStrategyCategoryConfirmationTests(unittest.TestCase):
             candles=self.candles(),
             ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
             rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=2.0,
+            ema_trend_slope=0.001,
         )
         self.assertEqual(confirmed["signal"], "LONG")
         self.assertEqual(confirmed["category_scores"]["trend"]["long"], 40)
@@ -59,6 +61,7 @@ class AdvancedStrategyCategoryConfirmationTests(unittest.TestCase):
             candles=self.candles(),
             ema_fast=100.0, ema_slow=100.0, ema_trend=101.0,
             rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=2.0,
+            ema_trend_slope=0.001,
         )
         self.assertEqual(result["signal"], "NEUTRAL")
         self.assertFalse(result["category_confirmations"]["long"]["trend"])
@@ -95,6 +98,7 @@ class AdvancedStrategyInvalidationTests(unittest.TestCase):
             candles=self.candles("SHORT"),
             ema_fast=99.0, ema_slow=100.0, ema_trend=100.0,
             rsi=40.0, macd={"histogram": -1.0}, vwap=100.0, atr=2.0,
+            ema_trend_slope=-0.001,
         )
         self.assertEqual(result["signal"], "SHORT")
         self.assertEqual(result["invalidation"], {
