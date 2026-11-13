@@ -4,11 +4,14 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from uuid import uuid4
 
 from backend.security.principal import VerifiedPrincipal
 from backend.services.paper_price import BinancePublicPriceProvider, PriceQuote
+
+
+MONEY_QUANTUM = Decimal("0.00000001")
 
 
 class PaperAccountError(ValueError):
@@ -35,6 +38,14 @@ def _money(value: Decimal | str | int, field: str, *, allow_negative: bool = Fal
         or (amount < 0 and not allow_negative)
     ):
         raise PaperAccountError(f"{field} debe ser finito y {'no cero' if allow_negative else 'positivo'}")
+    if max(0, -amount.as_tuple().exponent) > 8:
+        raise PaperAccountError(f"{field} supera 8 decimales")
+    try:
+        amount = amount.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_EVEN)
+    except InvalidOperation:
+        raise PaperAccountError(f"{field} no puede representarse con 8 decimales") from None
+    if amount == 0:
+        raise PaperAccountError(f"{field} se redondea a cero")
     return amount
 
 
