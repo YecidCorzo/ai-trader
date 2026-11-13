@@ -233,7 +233,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             (self.account["id"],),
         ).fetchall()
         self.assertEqual(len(events), 1)
-        self.assertEqual(Decimal(events[0]["amount"]), Decimal("9.8"))
+        self.assertEqual(Decimal(events[0]["amount"]), expected_net.quantize(Decimal("0.00000001")))
         self.assertEqual(events[0]["idempotency_key"], f"trade-close:{trade['id']}")
 
     def test_exit_price_is_market_sourced_and_account_scoped(self):
