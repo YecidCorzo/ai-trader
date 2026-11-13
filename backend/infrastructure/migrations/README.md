@@ -37,5 +37,13 @@ an explicit opening-capital event before funding events or linked trades can
 be recorded.
 
 PAPER accounts are not connected to personal-finance accounts, real bank
-balances or exchange wallets. No HTTP account/execution routes are enabled;
-an authentication/authorization boundary is required before adding them.
+balances or exchange wallets. Migration `0007_paper_account_ownership.sql`
+adds immutable issuer/subject ownership for new accounts. Pre-existing rows
+remain unowned and are not auto-claimed. Account-creation idempotency keys are
+stored as owner-scoped SHA-256 digests.
+
+Provider-neutral principal, fail-closed bearer dependency and owner-scoped
+account/trade lookup primitives are implemented, but no production identity
+provider is configured and no HTTP account/execution routes are enabled. A
+real verifier and its expiry, audience, issuer and revocation tests remain a
+gate before any such routes can be added.

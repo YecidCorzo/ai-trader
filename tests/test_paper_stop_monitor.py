@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from backend.infrastructure.database import apply_migrations, connect_database
+from backend.security.principal import VerifiedPrincipal
 from backend.services.paper_account import PaperAccountService, StaleMarketPriceError
 from backend.services.paper_execution import PaperExecutionService
 from backend.services.paper_price import PriceQuote
@@ -28,12 +29,14 @@ class PaperStopMonitorTests(unittest.TestCase):
         self.connection = connect_database(":memory:")
         apply_migrations(self.connection)
         self.provider = FakePriceProvider()
+        self.principal = VerifiedPrincipal(issuer="https://tests.example", subject="paper-user-1")
         self.accounts = PaperAccountService(self.connection, self.provider)
         self.account = self.accounts.create_account(
             name="Stop monitor demo",
             quote_currency="USDT",
             opening_capital="10000",
             idempotency_key="stop-monitor-opening",
+            principal=self.principal,
         )
         self.execution = PaperExecutionService(
             self.connection, account_service=self.accounts
