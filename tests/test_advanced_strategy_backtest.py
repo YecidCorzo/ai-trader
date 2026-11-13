@@ -61,6 +61,17 @@ class AdvancedStrategyBacktestTests(unittest.TestCase):
         self.assertAlmostEqual(values["vwap"][-1], calculate_vwap(rows), places=10)
         self.assertAlmostEqual(values["atr"][-1], calculate_atr(rows, 14), places=10)
 
+    def test_backtest_vwap_resets_at_utc_midnight(self):
+        rows = [
+            {"time": "2026-01-01T23:55:00Z", "open": 100, "high": 101, "low": 99, "close": 100, "volume": 100},
+            {"time": "2026-01-02T00:00:00Z", "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1},
+            {"time": "2026-01-02T00:05:00Z", "open": 220, "high": 221, "low": 219, "close": 220, "volume": 3},
+        ]
+        values = AdvancedStrategyBacktestService._indicator_series(rows)
+        self.assertAlmostEqual(values["vwap"][0], 100.0)
+        self.assertAlmostEqual(values["vwap"][1], 200.0)
+        self.assertAlmostEqual(values["vwap"][2], 215.0)
+
     def test_long_signal_uses_next_bar_open_and_adverse_fills(self):
         service = AdvancedStrategyBacktestService(strategy=StubAdvancedStrategy("LONG"))
         result = service.run(candles_fixture("LONG"))
