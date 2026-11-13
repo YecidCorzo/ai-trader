@@ -240,6 +240,10 @@ class AdvancedStrategyBacktestService:
                 skipped_signals += 1
                 index += 1
                 continue
+            if math.floor(quantity * 0.5 * 100_000_000) / 100_000_000 <= 0:
+                skipped_signals += 1
+                index += 1
+                continue
 
             entry_fee = quantity * entry * self.fee_rate
             liquidation = (
@@ -318,7 +322,7 @@ class AdvancedStrategyBacktestService:
                             exit_reason = "take_profit_2"
 
                 if tp1_hit and partial_quantity == 0.0:
-                    partial_quantity = quantity * 0.5
+                    partial_quantity = math.floor(quantity * 0.5 * 100_000_000) / 100_000_000
                     remaining_quantity = quantity - partial_quantity
                     partial_exit_price = target_1 * (
                         1 - self.slippage_rate if direction == "LONG" else 1 + self.slippage_rate
