@@ -1,17 +1,17 @@
+import os
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from backend.infrastructure.database import apply_migrations, connect_database
 from backend.main import app
 from backend.security.principal import VerifiedPrincipal
 from backend.services.paper_price import PriceQuote
-from backend.api.paper_routes import (
-    get_db_connection,
-    get_price_provider,
-)
+from backend.api.paper_routes import get_price_provider
 from backend.security.dependencies import get_verified_principal
 
 
@@ -30,22 +30,21 @@ class FakePriceProvider:
 
 class PaperRoutesTests(unittest.TestCase):
     def setUp(self):
-        self.connection = connect_database(":memory:")
-        apply_migrations(self.connection)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "paper.sqlite3"
+        self.env_patcher = patch.dict(os.environ, {"AI_TRADER_DB_PATH": str(self.db_path)})
+        self.env_patcher.start()
         self.principal = VerifiedPrincipal("https://issuer.example", "paper-user-a")
         self.provider = FakePriceProvider()
 
-        def override_connection():
-            yield self.connection
-
-        app.dependency_overrides[get_db_connection] = override_connection
         app.dependency_overrides[get_verified_principal] = lambda: self.principal
         app.dependency_overrides[get_price_provider] = lambda: self.provider
         self.client = TestClient(app)
 
     def tearDown(self):
         app.dependency_overrides.clear()
-        self.connection.close()
+        self.env_patcher.stop()
+        self.temp_dir.cleanup()
 
     def create_account(self, key="create-account"):
         response = self.client.post(
