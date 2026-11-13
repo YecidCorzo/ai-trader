@@ -40,9 +40,9 @@ def candles_fixture(side="LONG"):
                 candle.update({"high": 100.0, "low": 94.0})
         if index == 52:
             if side == "LONG":
-                candle.update({"open": 101.0, "high": 111.0, "low": 101.0})
+                candle.update({"open": 101.0, "high": 111.0, "low": 101.0, "close": 101.0})
             else:
-                candle.update({"open": 99.8, "high": 99.9, "low": 89.0})
+                candle.update({"open": 99.8, "high": 99.9, "low": 89.0, "close": 99.8})
         rows.append(candle)
     return rows
 
