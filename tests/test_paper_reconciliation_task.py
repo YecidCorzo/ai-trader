@@ -49,16 +49,24 @@ class PaperReconciliationTaskTests(unittest.TestCase):
         self.assertFalse(by_account[self.second["id"]]["circuit_breaker"]["halted"])
 
     def test_task_failure_persists_system_halt_and_reports_stored_state(self):
-        class FailingReconciliationService:
+        failed_account_id = self.first["id"]
+
+        class SelectivelyFailingService:
             def __init__(self, connection):
                 self.connection = connection
 
             def reconcile_account(self, account_id):
-                raise RuntimeError("forced reconciliation failure")
+                if account_id == failed_account_id:
+                    raise RuntimeError("forced reconciliation failure")
+                return {
+                    "consistent": True,
+                    "alert": None,
+                    "circuit_breaker": {"halted": False},
+                }
 
         result = PaperReconciliationTask(
             self.connection,
-            execution_service_factory=FailingReconciliationService,
+            execution_service_factory=SelectivelyFailingService,
         ).run_once()
 
         by_account = {item["account_id"]: item for item in result}
