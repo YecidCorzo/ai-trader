@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
 
 try:
     from backend.repositories.paper_trading_repository import PaperTradingRepository
@@ -183,9 +183,17 @@ class PaperExecutionService:
             Decimal("1") + slippage_rate if side == "LONG"
             else Decimal("1") - slippage_rate
         )
+        entry = entry.quantize(
+            Decimal("0.00000001"),
+            rounding=ROUND_UP if side == "LONG" else ROUND_DOWN,
+        )
         stop_exit = stop * (
             Decimal("1") - slippage_rate if side == "LONG"
             else Decimal("1") + slippage_rate
+        )
+        stop_exit = stop_exit.quantize(
+            Decimal("0.00000001"),
+            rounding=ROUND_DOWN if side == "LONG" else ROUND_UP,
         )
         if stop_exit <= 0:
             raise ValueError("El stop ajustado por slippage debe ser positivo")
@@ -244,8 +252,12 @@ class PaperExecutionService:
                 self._connection.rollback()
                 raise RiskRejectedError("position_size_not_computable")
 
-            opening_fee = max(requested_entry_fee, qty * entry * fee_rate)
-            exit_fee = max(requested_exit_fee, qty * stop_exit * fee_rate)
+            opening_fee = max(requested_entry_fee, qty * entry * fee_rate).quantize(
+                Decimal("0.00000001"), rounding=ROUND_UP,
+            )
+            exit_fee = max(requested_exit_fee, qty * stop_exit * fee_rate).quantize(
+                Decimal("0.00000001"), rounding=ROUND_UP,
+            )
             new_notional = qty * entry
             new_commitment = new_notional + opening_fee
             if new_commitment > free_cash:
@@ -368,9 +380,15 @@ class PaperExecutionService:
                 Decimal("1") - slippage_rate if current["side"] == "LONG"
                 else Decimal("1") + slippage_rate
             )
+            fill_price = fill_price.quantize(
+                Decimal("0.00000001"),
+                rounding=ROUND_DOWN if current["side"] == "LONG" else ROUND_UP,
+            )
             quantity = Decimal(current["quantity"])
             engine_fee = quantity * fill_price * fee_rate
-            closing_fee = max(_non_negative_decimal(exit_fee, "exit_fee"), engine_fee)
+            closing_fee = max(_non_negative_decimal(exit_fee, "exit_fee"), engine_fee).quantize(
+                Decimal("0.00000001"), rounding=ROUND_UP,
+            )
             closed = self._ledger.close_trade(
                 trade_id, exit_price=fill_price,
                 exit_fee=closing_fee, exit_reason=exit_reason, actor=actor,
