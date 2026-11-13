@@ -276,6 +276,22 @@ class PaperAccountService:
             raise MissingOpeningCapitalError("La cuenta PAPER no tiene capital inicial explícito")
         return sum((Decimal(row["amount"]) for row in rows), Decimal("0"))
 
+    def calculate_free_cash(self, account_id: str) -> Decimal:
+        """Return cash not committed to the notional and entry fees of open trades."""
+        self.get_account(account_id)
+        balance = self._balance(account_id)
+        rows = self._connection.execute(
+            """SELECT quantity, entry_price, entry_fee FROM paper_trades
+               WHERE paper_account_id = ? AND status = 'OPEN'""",
+            (account_id,),
+        ).fetchall()
+        committed = sum(
+            (Decimal(row["quantity"]) * Decimal(row["entry_price"])
+             + Decimal(row["entry_fee"]) for row in rows),
+            Decimal("0"),
+        )
+        return balance - committed
+
     def calculate_equity(
         self, account_id: str, *, now: datetime | None = None,
     ) -> Decimal:
