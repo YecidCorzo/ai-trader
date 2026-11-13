@@ -95,6 +95,13 @@ class AdvancedStrategyBacktestTests(unittest.TestCase):
         self.assertGreater(trade["entry"], 100.0)
         self.assertLess(trade["exit"], trade["take_profit_2"])
         self.assertLessEqual(trade["net_pnl"], trade["gross_pnl"])
+        self.assertGreater(trade["tp1_exit_fee"], 0)
+        self.assertGreater(trade["tp1_partial_quantity"], 0)
+        self.assertAlmostEqual(
+            result["total_fees"],
+            trade["entry_fee"] + trade["exit_fee"],
+            places=7,
+        )
         self.assertLessEqual(trade["quantity"] * (
             abs(trade["entry"] - trade["stop_loss"] * (1 - service.slippage_rate))
             + trade["entry"] * service.fee_rate
