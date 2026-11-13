@@ -18,6 +18,7 @@ from services.advanced_strategy_backtest import AdvancedStrategyBacktestService
 from services.backtest_review import review_backtest
 from services.backtest_research import run_walk_forward_backtests, run_advanced_strategy_walk_forward_backtests
 from services.strategy_acceptance import evaluate_advanced_strategy_go_no_go
+from services.multi_timeframe_analysis import MultiTimeframeAnalysisService
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,15 @@ def get_signal():
         "mode": "paper"
     }
 
+
+@app.get("/api/signal/multi-timeframe")
+def get_multi_timeframe_signal():
+    """Return 5m/15m/1h closed-candle signals and strict directional consensus."""
+    try:
+        service = MultiTimeframeAnalysisService(market_service, limit=500)
+        return service.run()
+    except Exception:
+        raise _internal_server_error("multi_timeframe_signal") from None
 
 @app.get("/api/signal/v2")
 def get_signal_v2():
