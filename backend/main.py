@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import logging
+import os
 
 from services.market_services import MarketService
 from services.signal_validation import validate_signal_history
@@ -19,6 +20,10 @@ from services.backtest_review import review_backtest
 from services.backtest_research import run_walk_forward_backtests, run_advanced_strategy_walk_forward_backtests
 from services.strategy_acceptance import evaluate_advanced_strategy_go_no_go
 from services.multi_timeframe_analysis import MultiTimeframeAnalysisService
+try:
+    from backend.api.paper_routes import router as paper_router
+except ImportError:
+    from api.paper_routes import router as paper_router
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +34,22 @@ def _internal_server_error(operation):
 
 
 app = FastAPI(title="AI Trader API")
+app.include_router(paper_router)
 market_service = MarketService("SOLUSDT")
 strategy = EmaRsiStrategy()
+cors_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "AI_TRADER_CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 @app.get("/")
