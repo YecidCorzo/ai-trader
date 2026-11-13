@@ -135,6 +135,11 @@ class PaperRoutesTests(unittest.TestCase):
         self.assertIn("CIRCUIT_BREAKER_HALTED", types)
         self.assertIn("CIRCUIT_BREAKER_RESET", types)
 
+    def test_paper_routes_reject_missing_bearer_credentials(self):
+        app.dependency_overrides.pop(get_verified_principal, None)
+        response = self.client.get("/api/paper/accounts")
+        self.assertEqual(response.status_code, 401)
+
     def test_funding_is_owner_scoped_and_cannot_withdraw_committed_cash(self):
         account_id = self.create_account()
         response = self.client.post(
