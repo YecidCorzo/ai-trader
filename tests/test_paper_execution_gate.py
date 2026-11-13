@@ -450,5 +450,37 @@ class PaperExecutionGateTests(unittest.TestCase):
             )
         self.assertEqual(self.accounts.calculate_free_cash(self.account["id"]), Decimal("1000"))
 
+    def test_third_consecutive_loss_halts_until_reset_then_allows_entry(self):
+        self.execution = PaperExecutionService(
+            self.connection,
+            risk_engine=RiskEngine(RiskLimits(max_daily_loss=Decimal("0.5"))),
+            account_service=self.accounts,
+        )
+        for index in range(3):
+            self.provider.price = Decimal("100")
+            trade = self.open_position(entry_fee="0", estimated_exit_fee="0")
+            self.provider.price = Decimal("99")
+            self.execution.close_position(trade["id"], account_id=self.account["id"])
+            halted = self.execution.circuit_breaker_status(self.account["id"])["halted"]
+            self.assertEqual(halted, index == 2)
+
+        self.provider.price = Decimal("100")
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position(entry_fee="0", estimated_exit_fee="0")
+        self.assertEqual(raised.exception.reason, "circuit_breaker_halted")
+
+        reset = self.execution.reset_circuit_breaker(
+            self.account["id"], confirmed_by="paper-test-operator",
+        )
+        self.assertFalse(reset["halted"])
+        metrics = self.execution._repository.risk_metrics(
+            day_start="2026-11-13T00:00:00.000000Z",
+            day_end="2026-11-14T00:00:00.000000Z",
+            loss_streak_limit=3, account_id=self.account["id"],
+        )
+        self.assertEqual(metrics["consecutive_losses"], 0)
+        reopened = self.open_position(entry_fee="0", estimated_exit_fee="0")
+        self.assertEqual(reopened["status"], "OPEN")
+
 if __name__ == "__main__":
     unittest.main()
