@@ -107,11 +107,12 @@ class PaperExecutionService:
 
     def open_position(
         self, *, account_id: str, symbol: str, strategy: str, side: str,
-        quantity: Decimal | str, stop_price: Decimal | str,
-        principal: VerifiedPrincipal, idempotency_key: str,
+        stop_price: Decimal | str, principal: VerifiedPrincipal,
+        idempotency_key: str, risk_fraction: Decimal | str | None = None,
         entry_fee: Decimal | str = "0",
         estimated_exit_fee: Decimal | str = "0", metadata: dict | None = None,
     ) -> dict:
+        """Open a PAPER position with engine-owned adverse fills, costs and sizing."""
         if not account_id or not account_id.strip():
             raise ValueError("account_id es obligatorio")
         if not isinstance(principal, VerifiedPrincipal):
@@ -122,35 +123,80 @@ class PaperExecutionService:
         if not key:
             raise ValueError("idempotency_key es obligatorio")
         account = self._accounts.get_account(account_id)
-        normalized_symbol = _validate_account_symbol(
-            symbol, account["quote_currency"]
-        )
+        normalized_symbol = _validate_account_symbol(symbol, account["quote_currency"])
         side = side.strip().upper()
         if side not in {"LONG", "SHORT"}:
             raise ValueError("side debe ser LONG o SHORT")
-        qty = _positive_decimal(quantity, "quantity")
         stop = _positive_decimal(stop_price, "stop_price")
-        opening_fee = _non_negative_decimal(entry_fee, "entry_fee")
-        exit_fee = _non_negative_decimal(estimated_exit_fee, "estimated_exit_fee")
+        requested_entry_fee = _non_negative_decimal(entry_fee, "entry_fee")
+        requested_exit_fee = _non_negative_decimal(estimated_exit_fee, "estimated_exit_fee")
+        risk_cap = self._risk_engine.limits.max_risk_per_trade
+        requested_risk = risk_cap if risk_fraction is None else _positive_decimal(risk_fraction, "risk_fraction")
+        if requested_risk > risk_cap or requested_risk > Decimal("0.01"):
+            raise RiskRejectedError("risk_fraction_exceeds_engine_limit")
 
-        # Network I/O happens before acquiring SQLite's write lock. The quotes
-        # are checked again for age and persisted inside the atomic risk transaction.
+        def matches_request(existing_row) -> bool:
+            existing_metadata = json.loads(existing_row["metadata_json"] or "{}")
+            return (
+                existing_row["symbol"] == normalized_symbol
+                and existing_row["strategy"] == strategy.strip()
+                and existing_row["side"] == side
+                and Decimal(existing_metadata.get("stop_price", "0")) == stop
+                and Decimal(existing_metadata.get("risk_fraction", "0")) == requested_risk
+                and Decimal(existing_metadata.get("requested_entry_fee", "0")) == requested_entry_fee
+                and Decimal(existing_metadata.get("requested_exit_fee", "0")) == requested_exit_fee
+                and existing_metadata.get("actor") == actor
+            )
+
+        # Idempotent retries return the original fill even if market data is
+        # temporarily unavailable or the quote has moved since the first call.
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self._connection.execute(
+                "SELECT * FROM paper_trades WHERE paper_account_id = ? AND idempotency_key = ?",
+                (account_id, key),
+            ).fetchone()
+            self._connection.rollback()
+            if existing is not None:
+                if matches_request(existing):
+                    return dict(existing)
+                raise RiskRejectedError("idempotency_key_conflict")
+        except Exception:
+            self._connection.rollback()
+            raise
+
         quotes = self._accounts.fetch_open_position_quotes(
             account_id, additional_symbols=(normalized_symbol,),
         )
-        entry_quote = next(
-            (quote for quote in quotes if quote.symbol == normalized_symbol),
-            None,
-        )
+        entry_quote = next((quote for quote in quotes if quote.symbol == normalized_symbol), None)
         if entry_quote is None:
             raise ValueError("No hay un precio de mercado actual para el símbolo")
-        entry = _positive_decimal(entry_quote.price, "market_entry_price")
-
-        if side == "LONG" and stop >= entry:
+        quote_price = _positive_decimal(entry_quote.price, "market_entry_quote")
+        slippage_rate = Decimal("0.0005")
+        fee_rate = Decimal("0.001")
+        entry = quote_price * (
+            Decimal("1") + slippage_rate if side == "LONG"
+            else Decimal("1") - slippage_rate
+        )
+        stop_exit = stop * (
+            Decimal("1") - slippage_rate if side == "LONG"
+            else Decimal("1") + slippage_rate
+        )
+        if stop_exit <= 0:
+            raise ValueError("El stop ajustado por slippage debe ser positivo")
+        if side == "LONG" and stop >= quote_price:
             raise ValueError("El stop de LONG debe estar por debajo del precio de mercado")
-        if side == "SHORT" and stop <= entry:
+        if side == "SHORT" and stop <= quote_price:
             raise ValueError("El stop de SHORT debe estar por encima del precio de mercado")
-        planned_loss = abs(entry - stop) * qty + opening_fee + exit_fee
+        if (side == "LONG" and stop_exit >= entry) or (side == "SHORT" and stop_exit <= entry):
+            raise ValueError("El stop no define una pérdida positiva después de costes")
+
+        unit_gross_loss = abs(entry - stop_exit)
+        unit_entry_fee = entry * fee_rate
+        unit_exit_fee = stop_exit * fee_rate
+        unit_planned_loss = unit_gross_loss + unit_entry_fee + unit_exit_fee
+        if not unit_planned_loss.is_finite() or unit_planned_loss <= 0:
+            raise RiskRejectedError("position_size_not_computable")
 
         try:
             self._connection.execute("BEGIN IMMEDIATE")
@@ -160,21 +206,11 @@ class PaperExecutionService:
                 (account_id, key),
             ).fetchone()
             if existing is not None:
-                existing_metadata = json.loads(existing["metadata_json"] or "{}")
-                same_request = (
-                    existing["symbol"] == normalized_symbol
-                    and existing["strategy"] == strategy.strip()
-                    and existing["side"] == side
-                    and Decimal(existing["quantity"]) == qty
-                    and Decimal(existing["entry_fee"]) == opening_fee
-                    and existing_metadata.get("stop_price") == str(stop)
-                    and existing_metadata.get("actor") == actor
-                    and existing_metadata.get("estimated_exit_fee") == str(exit_fee)
-                )
                 self._connection.rollback()
-                if same_request:
+                if matches_request(existing):
                     return dict(existing)
                 raise RiskRejectedError("idempotency_key_conflict")
+
             open_positions = self._repository.count_open_trades(account_id)
             if open_positions >= self._risk_engine.limits.max_open_positions:
                 self._connection.rollback()
@@ -183,6 +219,28 @@ class PaperExecutionService:
             equity = self._accounts.calculate_equity(account_id, now=now)
             free_cash = self._accounts.calculate_free_cash(account_id)
             committed_before = self._accounts.calculate_open_commitment(account_id)
+
+            risk_budget = equity * requested_risk
+            # Caller-supplied fees may increase the cost assumption, never
+            # reduce the engine's 10 bps minimum. Subtract them conservatively
+            # before sizing; the ledger records max(caller fee, engine fee).
+            available_risk = risk_budget - requested_entry_fee - requested_exit_fee
+            if available_risk <= 0:
+                self._connection.rollback()
+                raise RiskRejectedError("position_size_not_computable")
+            quantity_by_risk = available_risk / unit_planned_loss
+            available_cash = free_cash - requested_entry_fee
+            if available_cash <= 0:
+                self._connection.rollback()
+                raise RiskRejectedError("insufficient_free_cash")
+            quantity_by_cash = available_cash / (entry * (Decimal("1") + fee_rate))
+            qty = min(quantity_by_risk, quantity_by_cash).quantize(Decimal("0.00000001"))
+            if not qty.is_finite() or qty <= 0:
+                self._connection.rollback()
+                raise RiskRejectedError("position_size_not_computable")
+
+            opening_fee = max(requested_entry_fee, qty * entry * fee_rate)
+            exit_fee = max(requested_exit_fee, qty * stop_exit * fee_rate)
             new_notional = qty * entry
             new_commitment = new_notional + opening_fee
             if new_commitment > free_cash:
@@ -191,6 +249,15 @@ class PaperExecutionService:
             if committed_before + new_commitment > equity:
                 self._connection.rollback()
                 raise RiskRejectedError("committed_capital_exceeds_equity")
+            planned_loss = (
+                qty * unit_planned_loss
+                + max(Decimal("0"), requested_entry_fee - qty * unit_entry_fee)
+                + max(Decimal("0"), requested_exit_fee - qty * unit_exit_fee)
+            )
+            if planned_loss <= 0 or planned_loss > risk_budget:
+                self._connection.rollback()
+                raise RiskRejectedError("per_trade_risk_limit_exceeded")
+
             breaker = CircuitBreaker(self._connection, account_id)
             breaker_halted = breaker.status()["halted"]
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -202,36 +269,34 @@ class PaperExecutionService:
                 account_id=account_id,
             )
             snapshot = RiskSnapshot(
-                equity=equity,
-                planned_loss=planned_loss,
+                equity=equity, planned_loss=planned_loss,
                 daily_realized_pnl=metrics["daily_realized_pnl"],
-                open_positions=open_positions,
-                trades_today=metrics["trades_today"],
+                open_positions=open_positions, trades_today=metrics["trades_today"],
                 consecutive_losses=metrics["consecutive_losses"],
                 circuit_breaker_halted=breaker_halted,
             )
             decision = self._risk_engine.evaluate(snapshot)
             if not decision.approved:
                 if decision.reason == "daily_loss_limit_reached" and not breaker_halted:
-                    breaker.halt(
-                        "Risk Engine: daily loss limit reached",
-                        updated_by="risk_engine",
-                    )
+                    breaker.halt("Risk Engine: daily loss limit reached", updated_by="risk_engine")
                 else:
                     self._connection.rollback()
                 raise RiskRejectedError(decision.reason)
 
             trade_metadata = dict(metadata or {})
             trade_metadata.update({
-                "mode": "paper",
-                "paper_account_id": account_id,
-                "stop_price": str(stop),
-                "planned_loss": str(planned_loss),
+                "mode": "paper", "paper_account_id": account_id,
+                "stop_price": str(stop), "planned_loss": str(planned_loss),
                 "estimated_exit_fee": str(exit_fee),
+                "risk_fraction": str(requested_risk),
+                "requested_entry_fee": str(requested_entry_fee),
+                "requested_exit_fee": str(requested_exit_fee),
+                "fee_rate": str(fee_rate), "slippage_rate": str(slippage_rate),
+                "entry_quote": str(quote_price), "entry_slippage": str(entry - quote_price),
+                "stop_exit_estimate": str(stop_exit),
                 "risk_ratio": str(decision.risk_ratio),
                 "equity_source": "persisted_paper_account",
-                "idempotency_key": key,
-                "actor": actor,
+                "idempotency_key": key, "actor": actor,
             })
             return self._ledger.open_trade(
                 symbol=normalized_symbol, strategy=strategy, side=side,
@@ -279,7 +344,7 @@ class PaperExecutionService:
         exit_fee: Decimal, exit_reason: str | None,
         actor: dict | None = None,
     ) -> dict:
-        """Close at an observed public-market quote; never substitute the stop price."""
+        """Close at a quote with adverse side-aware slippage and engine fee floor."""
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             current = self._ledger.get_trade(trade_id)
@@ -291,9 +356,19 @@ class PaperExecutionService:
                 raise ValueError("La cotización no corresponde al símbolo de la operación")
             now = datetime.now(timezone.utc)
             self._accounts.persist_price_quotes([quote], now=now)
+            quote_price = _positive_decimal(quote.price, "market_exit_quote")
+            slippage_rate = Decimal("0.0005")
+            fee_rate = Decimal("0.001")
+            fill_price = quote_price * (
+                Decimal("1") - slippage_rate if current["side"] == "LONG"
+                else Decimal("1") + slippage_rate
+            )
+            quantity = Decimal(current["quantity"])
+            engine_fee = quantity * fill_price * fee_rate
+            closing_fee = max(_non_negative_decimal(exit_fee, "exit_fee"), engine_fee)
             closed = self._ledger.close_trade(
-                trade_id, exit_price=quote.price,
-                exit_fee=exit_fee, exit_reason=exit_reason, actor=actor,
+                trade_id, exit_price=fill_price,
+                exit_fee=closing_fee, exit_reason=exit_reason, actor=actor,
             )
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
