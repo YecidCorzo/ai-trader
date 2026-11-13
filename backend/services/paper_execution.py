@@ -149,7 +149,7 @@ class PaperExecutionService:
             self._accounts.persist_price_quotes(quotes, now=now)
             equity = self._accounts.calculate_equity(account_id, now=now)
             free_cash = self._accounts.calculate_free_cash(account_id)
-            committed_before = self._accounts._balance(account_id) - free_cash
+            committed_before = self._accounts.calculate_open_commitment(account_id)
             new_notional = qty * entry
             new_commitment = new_notional + opening_fee
             if new_commitment > free_cash:
