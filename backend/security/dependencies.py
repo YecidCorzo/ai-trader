@@ -6,11 +6,14 @@ from functools import lru_cache
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from backend.security.oidc_verifier import (
-    InvalidBearerToken,
-    OIDCConfigurationError,
-    OIDCJWTVerifier,
-)
+try:
+    from backend.security.oidc_verifier import (
+        InvalidBearerToken, OIDCConfigurationError, OIDCJWTVerifier,
+    )
+except ImportError:
+    from security.oidc_verifier import (
+        InvalidBearerToken, OIDCConfigurationError, OIDCJWTVerifier,
+    )
 
 _bearer = HTTPBearer(auto_error=False)
 
