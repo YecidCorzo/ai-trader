@@ -51,7 +51,6 @@ class PaperStopMonitorTests(unittest.TestCase):
             symbol="SOLUSDT",
             strategy="stop-monitor-test",
             side=side,
-            quantity="1",
             stop_price=stop,
             entry_fee="0.1",
             estimated_exit_fee="0.1",
