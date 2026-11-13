@@ -78,13 +78,14 @@ class AdvancedStrategyInvalidationTests(unittest.TestCase):
         else:
             prior = {"high": 102.0, "low": 100.0, "close": 101.0, "volume": 10.0}
             last = {"high": 101.0, "low": 99.0, "close": 99.5, "volume": 10.0}
-        return [dict(prior) for _ in range(5)] + [last]
+        return [dict(prior) for _ in range(19)] + [last]
 
     def test_long_plan_declares_at_or_below_atr_invalidation(self):
         result = AdvancedStrategy().evaluate(
             candles=self.candles("LONG"),
             ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
             rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=2.0,
+            ema_trend_slope=0.001,
         )
         self.assertEqual(result["signal"], "LONG")
         self.assertEqual(result["invalidation"], {
@@ -106,6 +107,49 @@ class AdvancedStrategyInvalidationTests(unittest.TestCase):
             "trigger": "at_or_above",
             "basis": "atr_stop",
         })
+
+    def test_atr_percent_outside_configured_band_blocks_signal(self):
+        strategy = AdvancedStrategy()
+        low_atr = strategy.evaluate(
+            candles=AdvancedStrategyCategoryConfirmationTests.candles(),
+            ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=0.01,
+            ema_trend_slope=0.001,
+        )
+        high_atr = strategy.evaluate(
+            candles=AdvancedStrategyCategoryConfirmationTests.candles(),
+            ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=6.0,
+            ema_trend_slope=0.001,
+        )
+        self.assertEqual(low_atr["signal"], "NEUTRAL")
+        self.assertFalse(low_atr["regime_filters"]["atr_ok"])
+        self.assertEqual(high_atr["signal"], "NEUTRAL")
+        self.assertFalse(high_atr["regime_filters"]["atr_ok"])
+
+    def test_relative_volume_below_twenty_bar_mean_blocks_signal(self):
+        candles = AdvancedStrategyCategoryConfirmationTests.candles()
+        candles[-1]["volume"] = 0.1
+        result = AdvancedStrategy().evaluate(
+            candles=candles,
+            ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=2.0,
+            ema_trend_slope=0.001,
+        )
+        self.assertEqual(result["signal"], "NEUTRAL")
+        self.assertFalse(result["regime_filters"]["volume_ok"])
+        self.assertLess(result["regime_filters"]["volume_ratio"], 1.0)
+
+    def test_ema_slope_must_agree_with_trade_direction(self):
+        result = AdvancedStrategy().evaluate(
+            candles=AdvancedStrategyCategoryConfirmationTests.candles(),
+            ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=2.0,
+            ema_trend_slope=-0.001,
+        )
+        self.assertEqual(result["signal"], "NEUTRAL")
+        self.assertFalse(result["regime_filters"]["long_ema_slope_ok"])
+        self.assertTrue(result["regime_filters"]["short_ema_slope_ok"])
 
     def test_neutral_and_invalid_atr_plans_have_no_invalidation(self):
         neutral = AdvancedStrategy().evaluate(
