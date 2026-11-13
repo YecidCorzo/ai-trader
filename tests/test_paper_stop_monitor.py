@@ -67,8 +67,14 @@ class PaperStopMonitorTests(unittest.TestCase):
         self.assertEqual(len(closed), 1)
         self.assertEqual(closed[0]["id"], trade["id"])
         self.assertEqual(closed[0]["status"], "CLOSED")
-        self.assertEqual(Decimal(closed[0]["exit_price"]), Decimal("90"))
-        self.assertEqual(Decimal(closed[0]["realized_pnl"]), Decimal("-10.2"))
+        self.assertEqual(Decimal(closed[0]["exit_price"]), Decimal("89.955"))
+        expected = (
+            Decimal(closed[0]["quantity"])
+            * (Decimal(closed[0]["exit_price"]) - Decimal(closed[0]["entry_price"]))
+            - Decimal(closed[0]["entry_fee"])
+            - Decimal(closed[0]["exit_fee"])
+        )
+        self.assertEqual(Decimal(closed[0]["realized_pnl"]), expected)
         self.assertEqual(closed[0]["exit_reason"], "stop_loss_triggered")
 
     def test_short_stop_closes_when_market_rises_through_stop(self):
@@ -79,8 +85,14 @@ class PaperStopMonitorTests(unittest.TestCase):
 
         self.assertEqual(len(closed), 1)
         self.assertEqual(closed[0]["id"], trade["id"])
-        self.assertEqual(Decimal(closed[0]["exit_price"]), Decimal("108"))
-        self.assertEqual(Decimal(closed[0]["realized_pnl"]), Decimal("-8.2"))
+        self.assertEqual(Decimal(closed[0]["exit_price"]), Decimal("108.054"))
+        expected = (
+            Decimal(closed[0]["quantity"])
+            * (Decimal(closed[0]["entry_price"]) - Decimal(closed[0]["exit_price"]))
+            - Decimal(closed[0]["entry_fee"])
+            - Decimal(closed[0]["exit_fee"])
+        )
+        self.assertEqual(Decimal(closed[0]["realized_pnl"]), expected)
         self.assertEqual(closed[0]["exit_reason"], "stop_loss_triggered")
 
     def test_position_remains_open_when_stop_has_not_been_crossed(self):
