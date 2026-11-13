@@ -247,7 +247,7 @@ class PaperExecutionService:
                 self._connection.rollback()
                 raise RiskRejectedError("insufficient_free_cash")
             quantity_by_cash = available_cash / (entry * (Decimal("1") + fee_rate))
-            qty = min(quantity_by_risk, quantity_by_cash).quantize(Decimal("0.00000001"))
+            qty = min(quantity_by_risk, quantity_by_cash).quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
             if not qty.is_finite() or qty <= 0:
                 self._connection.rollback()
                 raise RiskRejectedError("position_size_not_computable")
