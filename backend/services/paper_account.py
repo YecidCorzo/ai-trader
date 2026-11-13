@@ -199,9 +199,12 @@ class PaperAccountService:
                     raise PaperAccountError("idempotency_key ya utilizado con otro contenido")
                 self._connection.commit()
                 return dict(existing)
-            balance = self._balance(account_id)
-            if signed < 0 and balance + signed < 0:
-                raise PaperAccountError("El movimiento supera el saldo disponible de la cuenta PAPER")
+            free_cash = self.calculate_free_cash(account_id)
+            if signed < 0 and -signed > free_cash:
+                raise PaperAccountError(
+                    "El movimiento supera el efectivo libre de la cuenta PAPER "
+                    "después de compromisos de posiciones abiertas"
+                )
             self._insert_event(
                 account_id=account_id, event_type=event_type, amount=signed,
                 currency=account["quote_currency"], idempotency_key=key,
