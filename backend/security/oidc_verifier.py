@@ -34,6 +34,11 @@ class OIDCJWTVerifier:
             raise OIDCConfigurationError("OIDC issuer, audience y JWKS URL son obligatorios")
         if self.leeway_seconds < 0 or self.leeway_seconds > 120:
             raise OIDCConfigurationError("OIDC clock leeway debe estar entre 0 y 120 segundos")
+        if self.jwks_client is None and (
+            not self.issuer.startswith("https://")
+            or not self.jwks_url.startswith("https://")
+        ):
+            raise OIDCConfigurationError("OIDC issuer y JWKS URL deben usar HTTPS")
 
     @classmethod
     def from_env(cls):
