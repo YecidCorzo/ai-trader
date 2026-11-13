@@ -95,7 +95,7 @@ class PaperReconciliationTaskTests(unittest.TestCase):
             json.loads(event["details_json"])["actor"],
             {"type": "system", "name": "paper_reconciliation_task"},
         )
-        self.assertFalse(by_account[self.second["id"]]["halted"])
+        self.assertFalse(by_account[self.second["id"]]["circuit_breaker"]["halted"])
 
     def test_task_reports_halt_false_when_persistence_fails(self):
         class FailingReconciliationService:
