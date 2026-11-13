@@ -86,7 +86,7 @@ Install pinned dependencies, then start the API:
 
 ```sh
 python -m pip install -r requirements.txt
-uvicorn backend.main:app --host 127.0.0.1 --port 8000
+PYTHONPATH=backend uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 Check `/health`, then configure the frontend to obtain an OIDC access token
