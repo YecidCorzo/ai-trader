@@ -421,7 +421,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         with self.assertRaises(RiskRejectedError) as raised:
             self.open_position(quantity="9.5", stop_price="98.99", entry_fee="0", estimated_exit_fee="0")
         self.assertEqual(raised.exception.reason, "committed_capital_exceeds_equity")
-        self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("9910"))
+        self.assertEqual(self.accounts.get_equity(self.account["id"]), Decimal("9910"))
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
 
 if __name__ == "__main__":
