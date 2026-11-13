@@ -249,10 +249,24 @@ class PaperExecutionService:
                 raise ValueError("La cotización no corresponde al símbolo de la operación")
             now = datetime.now(timezone.utc)
             self._accounts.persist_price_quotes([quote], now=now)
-            return self._ledger.close_trade(
+            closed = self._ledger.close_trade(
                 trade_id, exit_price=quote.price,
                 exit_fee=exit_fee, exit_reason=exit_reason,
             )
+            day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            metrics = self._repository.risk_metrics(
+                day_start=day_start.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                day_end=day_end.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                loss_streak_limit=self._risk_engine.limits.max_consecutive_losses,
+                account_id=account_id,
+            )
+            if metrics["consecutive_losses"] >= self._risk_engine.limits.max_consecutive_losses:
+                CircuitBreaker(self._connection, account_id).halt(
+                    "Risk Engine: consecutive loss limit reached",
+                    updated_by="risk_engine",
+                )
+            return closed
         except Exception:
             self._connection.rollback()
             raise
