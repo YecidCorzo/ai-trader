@@ -148,6 +148,16 @@ class PaperExecutionService:
                 raise RiskRejectedError("max_open_positions_reached")
             self._accounts.persist_price_quotes(quotes, now=now)
             equity = self._accounts.calculate_equity(account_id, now=now)
+            free_cash = self._accounts.calculate_free_cash(account_id)
+            committed_before = self._accounts._balance(account_id) - free_cash
+            new_notional = qty * entry
+            new_commitment = new_notional + opening_fee
+            if new_commitment > free_cash:
+                self._connection.rollback()
+                raise RiskRejectedError("insufficient_free_cash")
+            if committed_before + new_commitment > equity:
+                self._connection.rollback()
+                raise RiskRejectedError("committed_capital_exceeds_equity")
             breaker = CircuitBreaker(self._connection, account_id)
             breaker_halted = breaker.status()["halted"]
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
