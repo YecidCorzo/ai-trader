@@ -6,9 +6,11 @@ import os
 
 try:
     from backend.infrastructure.database import apply_migrations, connect_database
+    from backend.services.circuit_breaker import CircuitBreaker
     from backend.services.paper_execution import PaperExecutionService
 except ImportError:  # Support running with backend/ as the working directory.
     from infrastructure.database import apply_migrations, connect_database
+    from services.circuit_breaker import CircuitBreaker
     from services.paper_execution import PaperExecutionService
 
 logger = logging.getLogger(__name__)
@@ -34,19 +36,43 @@ class PaperReconciliationTask:
                 results.append({"account_id": account_id, **result})
             except Exception:
                 logger.exception("PAPER reconciliation task failed for account %s", account_id)
+                breaker = CircuitBreaker(self._connection, account_id)
                 try:
-                    breaker = service.halt(
-                        account_id, "PAPER reconciliation task failed",
+                    # This is an internal safety action, not a user operation.
+                    # CircuitBreaker records the system actor and persists the
+                    # halt without requiring a VerifiedPrincipal.
+                    breaker.halt(
+                        "PAPER reconciliation task failed",
                         updated_by="reconciliation_task",
+                        actor={"type": "system", "name": "paper_reconciliation_task"},
                     )
                 except Exception:
-                    logger.exception("Could not halt PAPER account %s after reconciliation failure", account_id)
-                    breaker = {"halted": True, "reason": "halt_state_unavailable"}
+                    logger.exception(
+                        "Could not persist PAPER circuit-breaker halt for account %s",
+                        account_id,
+                    )
+
+                # Never report a requested/intended halt as successful. Read
+                # the authoritative persisted state after the write attempt.
+                try:
+                    breaker_state = breaker.status()
+                except Exception:
+                    logger.exception(
+                        "Could not read persisted PAPER circuit-breaker state for account %s",
+                        account_id,
+                    )
+                    breaker_state = {
+                        "halted": False,
+                        "reason": "halt_state_unavailable",
+                        "account_id": account_id,
+                        "mode": "paper",
+                    }
                 results.append({
                     "account_id": account_id,
                     "consistent": False,
                     "alert": "PAPER_RECONCILIATION_FAILED",
-                    "circuit_breaker": breaker,
+                    "halted": bool(breaker_state["halted"]),
+                    "circuit_breaker": breaker_state,
                 })
         return results
 
@@ -66,6 +92,7 @@ def main() -> None:
             len(results), len(inconsistent),
         )
         if inconsistent:
+            # Exit 1 is consumed by cron/systemd monitoring and alerting.
             raise SystemExit(1)
     finally:
         connection.close()
