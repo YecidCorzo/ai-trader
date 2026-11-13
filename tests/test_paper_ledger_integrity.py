@@ -184,7 +184,7 @@ class PaperLedgerIntegrityTests(unittest.TestCase):
             self.ledger.open_trade(symbol="SOLUSDT", strategy="precision", side="LONG", quantity="1.000000001", entry_price="100")
         normalized = self.ledger.open_trade(symbol="SOLUSDT", strategy="precision", side="LONG", quantity="0001.2500", entry_price="000100.5000")
         self.assertEqual(normalized["quantity"], "1.2500")
-        self.assertEqual(normalized["entry_price"], "100.5000")
+        self.assertEqual(normalized["entry_price"], "100.50000000")
 
     def test_reconciliation_detects_a_trade_ledger_mismatch(self):
         closed = self.close_trade()
