@@ -79,6 +79,7 @@
     }
     .backtest-run { background: #3156a5; margin-top: 14px; }
     #backtest-result { white-space: pre-wrap; line-height: 1.6; margin-top: 14px; color: #d7e0ef; }
+    #signal-box { white-space: pre-wrap; line-height: 1.6; margin-top: 14px; color: #d7e0ef; }
     @media (max-width: 700px) {
       .grid { grid-template-columns: 1fr; }
       header { padding: 18px; }
@@ -118,8 +119,8 @@
       <h2>SOL / USDT <span class="muted">· Gráfico</span></h2>
      <div id="candles-chart" style="width:100%; height: 420px; padding-bottom: 20px; box-sizing: border-box;"></div>        
       <div class="actions">
-        <button class="long" onclick="signal('LONG')">Señal LONG</button>
-        <button class="short" onclick="signal('SHORT')">Señal SHORT</button>
+        <button class="long" onclick="signal('LONG')">Prueba visual LONG</button>
+        <button class="short" onclick="signal('SHORT')">Prueba visual SHORT</button>
       </div>
       <div id="signal-box" class="signal-box">Señal: Cargando...
       </div>
@@ -470,29 +471,39 @@ loadCandles();
 setInterval(loadCandles, 60000);
 async function loadSignal() {
   const signalBox = document.getElementById("signal-box");
+  const formatPrice = value =>
+    value == null || value === "" || !Number.isFinite(Number(value))
+      ? "N/D"
+      : Number(value).toFixed(4);
 
   try {
-    const response = await fetch("/api/signal");
+    const response = await fetch("/api/signal/v2");
     const data = await response.json();
 
-    if (!response.ok || data.error) {
-      signalBox.textContent = "Señal no disponible";
-      return;
+    if (!response.ok || data.error || !data.signal) {
+      throw new Error(data.detail || "Señal no disponible");
     }
 
-    signalBox.textContent =
-      "Señal: " +
-      data.signal +
-      " · RSI: " +
-      data.rsi.toFixed(2) +
-      " · EMA9: " +
-      data.ema9.toFixed(2) +
-      " · EMA21: " +
-      data.ema21.toFixed(2);
+    const lines = [
+      "Señal: " + data.signal,
+      "Puntuación de reglas: " + (data.score ?? "N/D") + "/100 (no es probabilidad)",
+      "Entrada de referencia: " + formatPrice(data.entry),
+      "Stop simulado: " + formatPrice(data.stop_loss),
+      "Take profit 1: " + formatPrice(data.take_profit_1),
+      "Take profit 2: " + formatPrice(data.take_profit_2),
+      "Relación riesgo/beneficio objetivo: " + (data.risk_reward ?? "N/D")
+    ];
+
+    if (Array.isArray(data.reasons) && data.reasons.length) {
+      lines.push("Razones: " + data.reasons.join("; "));
+    }
+
+    lines.push("Análisis PAPER; no se ha enviado ninguna orden.");
+    signalBox.textContent = lines.join("\n");
 
   } catch (error) {
-    console.error("Error cargando señal:", error);
-    signalBox.textContent = "Error al cargar señal";
+    console.error("Error cargando señal avanzada:", error);
+    signalBox.textContent = "Análisis no disponible: " + error.message;
   }
 }
 
