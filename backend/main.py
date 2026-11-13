@@ -6,7 +6,7 @@ import logging
 
 from services.market_services import MarketService
 from services.signal_validation import validate_signal_history
-from indicators.ema import calculate_ema
+from indicators.ema import calculate_ema, calculate_ema_series
 from indicators.rsi import calculate_rsi
 from indicators.macd import calculate_macd
 from indicators.vwap import calculate_vwap
@@ -162,7 +162,13 @@ def get_signal_v2():
         # exactly one period changes the EMA seed and diverges from backtests.
         ema_fast = calculate_ema(closes, 9)
         ema_slow = calculate_ema(closes, 21)
-        ema_trend = calculate_ema(closes, 50)
+        ema_trend_series = calculate_ema_series(closes, 50)
+        ema_trend = ema_trend_series[-1]
+        ema_trend_slope = (
+            (ema_trend_series[-1] - ema_trend_series[-6]) / ema_trend_series[-6]
+            if len(ema_trend_series) >= 6 and ema_trend_series[-6] != 0
+            else None
+        )
 
         # Calcular indicadores
         rsi = calculate_rsi(closes, period=14)
@@ -178,6 +184,7 @@ def get_signal_v2():
             ema_fast=ema_fast,
             ema_slow=ema_slow,
             ema_trend=ema_trend,
+            ema_trend_slope=ema_trend_slope,
             rsi=rsi,
             macd=macd,
             vwap=vwap,
