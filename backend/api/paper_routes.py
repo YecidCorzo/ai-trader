@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 from decimal import Decimal
 from typing import Literal
 
@@ -37,6 +38,8 @@ except ImportError:
     from services.paper_execution import PaperExecutionService, RiskRejectedError
     from services.paper_price import BinancePublicPriceProvider
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/paper",
@@ -122,6 +125,7 @@ def _raise_paper_error(error):
         raise HTTPException(status_code=409, detail="La cuenta PAPER requiere capital inicial explícito") from None
     if isinstance(error, (PaperAccountError, ValueError)):
         raise HTTPException(status_code=422, detail=str(error)) from None
+    logger.exception("Unexpected PAPER API error: %s", type(error).__name__)
     raise HTTPException(status_code=500, detail="Error interno en operación PAPER") from None
 
 
