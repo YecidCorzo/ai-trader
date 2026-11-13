@@ -62,7 +62,6 @@ class PaperExecutionGateTests(unittest.TestCase):
             "symbol": "SOLUSDT",
             "strategy": "ema-rsi",
             "side": "LONG",
-            "quantity": "1",
             "stop_price": "95",
             "entry_fee": "0.1",
             "estimated_exit_fee": "0.1",
@@ -116,7 +115,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             self.execution.open_position(
                 account_id=self.account["id"], symbol="SOLUSDT",
-                strategy="ema-rsi", side="LONG", quantity="1",
+                strategy="ema-rsi", side="LONG",
                 stop_price="95",
                 principal=self.principal, idempotency_key="risk-snapshot-test",
                 risk_snapshot={"equity": "999999999"},
@@ -130,7 +129,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         )
         with self.assertRaises(RiskRejectedError) as raised:
             self.open_position(
-                account_id=small["id"], quantity="1",
+                account_id=small["id"],
                 stop_price="95",
                 entry_fee="0", estimated_exit_fee="0",
             )
@@ -196,7 +195,7 @@ class PaperExecutionGateTests(unittest.TestCase):
     def test_daily_loss_is_derived_from_account_trade_ledger(self):
         prior = self.execution.open_position(
             account_id=self.account["id"], symbol="SOLUSDT",
-            strategy="test", side="LONG", quantity="10",
+            strategy="test", side="LONG",
             stop_price="99",
             entry_fee="0", estimated_exit_fee="0",
             principal=self.principal, idempotency_key="daily-loss-entry",
@@ -321,7 +320,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         with self.assertRaises(StaleMarketPriceError):
             stale_execution.open_position(
                 account_id=self.account["id"], symbol="BTCUSDT",
-                strategy="ema-rsi", side="LONG", quantity="1",
+                strategy="ema-rsi", side="LONG",
                 stop_price="95", principal=self.principal,
                 idempotency_key="stale-entry",
             )
@@ -341,7 +340,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "market data unavailable"):
             execution.open_position(
                 account_id=self.account["id"], symbol="BTCUSDT",
-                strategy="ema-rsi", side="LONG", quantity="1",
+                strategy="ema-rsi", side="LONG",
                 stop_price="95", principal=self.principal,
                 idempotency_key="unavailable-entry",
             )
@@ -382,7 +381,7 @@ class PaperExecutionGateTests(unittest.TestCase):
                     service = PaperExecutionService(connection, account_service=account_service)
                     return service.open_position(
                         account_id=account["id"], symbol=symbol,
-                        strategy="ema-rsi", side="LONG", quantity="1",
+                        strategy="ema-rsi", side="LONG",
                         stop_price="95", principal=self.principal,
                         idempotency_key=f"concurrent-{symbol}",
                     )
@@ -414,9 +413,9 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
             account_service=self.accounts,
         )
-        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        self.open_position(stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
         with self.assertRaises(RiskRejectedError) as raised:
-            self.open_position(quantity="10", stop_price="95", entry_fee="1", estimated_exit_fee="0")
+            self.open_position(stop_price="95", entry_fee="1", estimated_exit_fee="0")
         self.assertEqual(raised.exception.reason, "insufficient_free_cash")
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
 
@@ -425,10 +424,10 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
             account_service=self.accounts,
         )
-        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        self.open_position(stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
         self.provider.price = Decimal("99")
         with self.assertRaises(RiskRejectedError) as raised:
-            self.open_position(quantity="9.5", stop_price="98.99", entry_fee="0", estimated_exit_fee="0")
+            self.open_position(stop_price="98.99", entry_fee="0", estimated_exit_fee="0")
         self.assertEqual(raised.exception.reason, "committed_capital_exceeds_equity")
         self.assertEqual(self.accounts.get_equity(self.account["id"]), Decimal("9910"))
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
@@ -438,7 +437,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
             account_service=self.accounts,
         )
-        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        self.open_position(stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
         with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
             self.accounts.record_funding(
                 self.account["id"], event_type="WITHDRAWAL", amount="1001",
@@ -451,7 +450,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
             account_service=self.accounts,
         )
-        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        self.open_position(stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
         with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
             self.accounts.record_funding(
                 self.account["id"], event_type="ADJUSTMENT", amount="-1001",
@@ -497,7 +496,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.assertEqual(repeated["id"], first["id"])
         self.assertEqual(repeated["idempotency_key"], "stable-open-request")
         with self.assertRaises(RiskRejectedError) as raised:
-            self.open_position(idempotency_key="stable-open-request", quantity="2")
+            self.open_position(idempotency_key="stable-open-request")
         self.assertEqual(raised.exception.reason, "idempotency_key_conflict")
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE paper_account_id = ?", (self.account["id"],)).fetchone()[0], 1)
 
