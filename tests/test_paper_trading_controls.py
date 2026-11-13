@@ -230,6 +230,26 @@ class PaperTradingControlsTests(unittest.TestCase):
         )
         self.assertEqual(metrics["consecutive_losses"], 0)
 
+    def test_daily_metrics_use_microsecond_inclusive_start_and_exclusive_end(self):
+        self.ledger.open_trade(
+            symbol="SOLUSDT", strategy="boundary", side="LONG", quantity="1", entry_price="10",
+            opened_at=datetime.fromisoformat("2026-11-12T23:59:59.999999+00:00"),
+        )
+        self.ledger.open_trade(
+            symbol="BTCUSDT", strategy="boundary", side="LONG", quantity="1", entry_price="10",
+            opened_at=datetime.fromisoformat("2026-11-13T00:00:00.000000+00:00"),
+        )
+        self.ledger.open_trade(
+            symbol="ETHUSDT", strategy="boundary", side="LONG", quantity="1", entry_price="10",
+            opened_at=datetime.fromisoformat("2026-11-14T00:00:00.000000+00:00"),
+        )
+        metrics = self.ledger._repository.risk_metrics(
+            day_start="2026-11-13T00:00:00.000000Z",
+            day_end="2026-11-14T00:00:00.000000Z", loss_streak_limit=3,
+        )
+        self.assertEqual(metrics["trades_today"], 1)
+        self.assertEqual(metrics["daily_realized_pnl"], Decimal("0"))
+
     def test_audit_events_reject_updates_and_deletes(self):
         trade = self.ledger.open_trade(
             symbol="SOLUSDT", strategy="test", side="LONG",
