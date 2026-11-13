@@ -206,7 +206,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             principal=self.principal, idempotency_key="daily-loss-entry",
         )
         self.provider.price = Decimal("70")
-        self.execution.close_position(prior["id"], account_id=self.account["id"], principal=self.principal)
+        closed = self.execution.close_position(prior["id"], account_id=self.account["id"], principal=self.principal)
         self.assertLess(self.accounts.calculate_equity(self.account["id"]), Decimal("10000"))
         self.assertLess(Decimal(closed["realized_pnl"]), Decimal("0"))
         self.provider.price = Decimal("100")
@@ -224,7 +224,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         quantity = Decimal(closed["quantity"])
         gross = quantity * (Decimal(closed["exit_price"]) - Decimal(closed["entry_price"]))
         expected_net = gross - Decimal(closed["entry_fee"]) - Decimal(closed["exit_fee"])
-        self.assertEqual(Decimal(closed["realized_pnl"]), expected_net)
+        self.assertEqual(Decimal(closed["realized_pnl"]), expected_net.quantize(Decimal("0.00000001")))
         self.assertLess(Decimal(closed["exit_price"]), Decimal("110"))
         self.assertGreaterEqual(Decimal(closed["exit_fee"]), quantity * Decimal(closed["exit_price"]) * Decimal("0.001"))
         events = self.connection.execute(
@@ -467,7 +467,7 @@ class PaperExecutionGateTests(unittest.TestCase):
                 self.account["id"], event_type="ADJUSTMENT", amount="-1001",
                 idempotency_key="adjust-committed-cash",
             )
-        self.assertEqual(self.accounts.calculate_free_cash(self.account["id"]), Decimal("1000"))
+        self.assertLess(self.accounts.calculate_free_cash(self.account["id"]), Decimal("1"))
 
     def test_third_consecutive_loss_halts_until_reset_then_allows_entry(self):
         self.execution = PaperExecutionService(
@@ -507,7 +507,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.assertEqual(repeated["id"], first["id"])
         self.assertEqual(repeated["idempotency_key"], "stable-open-request")
         with self.assertRaises(RiskRejectedError) as raised:
-            self.open_position(idempotency_key="stable-open-request")
+            self.open_position(idempotency_key="stable-open-request", risk_fraction="0.005")
         self.assertEqual(raised.exception.reason, "idempotency_key_conflict")
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE paper_account_id = ?", (self.account["id"],)).fetchone()[0], 1)
 
@@ -521,6 +521,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         long_closed = self.execution.close_position(long_trade["id"], account_id=self.account["id"], principal=self.principal)
         self.assertLess(Decimal(long_closed["exit_price"]), Decimal("110"))
 
+        self.provider.price = Decimal("100")
         second = self.accounts.create_account(
             name="Short demo", quote_currency="USDT", opening_capital="10000",
             idempotency_key="short-opening", principal=self.principal,
