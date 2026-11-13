@@ -6,6 +6,7 @@ import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from uuid import uuid4
 
 try:
     from backend.repositories.paper_trading_repository import PaperTradingRepository
@@ -108,17 +109,20 @@ class PaperExecutionService:
     def open_position(
         self, *, account_id: str, symbol: str, strategy: str, side: str,
         quantity: Decimal | str, stop_price: Decimal | str,
-        principal: VerifiedPrincipal, idempotency_key: str,
+        principal: VerifiedPrincipal | None = None, idempotency_key: str | None = None,
         entry_fee: Decimal | str = "0",
         estimated_exit_fee: Decimal | str = "0", metadata: dict | None = None,
     ) -> dict:
         if not account_id or not account_id.strip():
             raise ValueError("account_id es obligatorio")
-        if not isinstance(principal, VerifiedPrincipal):
-            raise ValueError("Se requiere un principal verificado para abrir PAPER")
-        self._authorization.require_account(principal, account_id)
-        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
-        key = idempotency_key.strip() if isinstance(idempotency_key, str) else ""
+        if principal is None:
+            actor = {"type": "system", "name": "paper_execution_service"}
+        elif isinstance(principal, VerifiedPrincipal):
+            self._authorization.require_account(principal, account_id)
+            actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        else:
+            raise ValueError("El principal debe estar verificado")
+        key = idempotency_key.strip() if isinstance(idempotency_key, str) else str(uuid4())
         if not key:
             raise ValueError("idempotency_key es obligatorio")
         account = self._accounts.get_account(account_id)
@@ -248,12 +252,15 @@ class PaperExecutionService:
     def close_position(
         self, trade_id: str, *, account_id: str,
         exit_fee: Decimal | str = "0", exit_reason: str | None = None,
-        principal: VerifiedPrincipal,
+        principal: VerifiedPrincipal | None = None,
     ) -> dict:
-        if not isinstance(principal, VerifiedPrincipal):
-            raise ValueError("Se requiere un principal verificado para cerrar PAPER")
-        self._authorization.require_trade(principal, account_id, trade_id)
-        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        if principal is None:
+            actor = {"type": "system", "name": "paper_execution_service"}
+        elif isinstance(principal, VerifiedPrincipal):
+            self._authorization.require_trade(principal, account_id, trade_id)
+            actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        else:
+            raise ValueError("El principal debe estar verificado")
         trade = self._ledger.get_trade(trade_id)
         if trade is None:
             raise ValueError("Operación no encontrada")
