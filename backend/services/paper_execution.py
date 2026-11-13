@@ -6,7 +6,6 @@ import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from uuid import uuid4
 
 try:
     from backend.repositories.paper_trading_repository import PaperTradingRepository
@@ -109,20 +108,17 @@ class PaperExecutionService:
     def open_position(
         self, *, account_id: str, symbol: str, strategy: str, side: str,
         quantity: Decimal | str, stop_price: Decimal | str,
-        principal: VerifiedPrincipal | None = None, idempotency_key: str | None = None,
+        principal: VerifiedPrincipal, idempotency_key: str,
         entry_fee: Decimal | str = "0",
         estimated_exit_fee: Decimal | str = "0", metadata: dict | None = None,
     ) -> dict:
         if not account_id or not account_id.strip():
             raise ValueError("account_id es obligatorio")
-        if principal is None:
-            actor = {"type": "system", "name": "paper_execution_service"}
-        elif isinstance(principal, VerifiedPrincipal):
-            self._authorization.require_account(principal, account_id)
-            actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
-        else:
-            raise ValueError("El principal debe estar verificado")
-        key = idempotency_key.strip() if isinstance(idempotency_key, str) else str(uuid4())
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para abrir PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        key = idempotency_key.strip() if isinstance(idempotency_key, str) else ""
         if not key:
             raise ValueError("idempotency_key es obligatorio")
         account = self._accounts.get_account(account_id)
@@ -252,15 +248,12 @@ class PaperExecutionService:
     def close_position(
         self, trade_id: str, *, account_id: str,
         exit_fee: Decimal | str = "0", exit_reason: str | None = None,
-        principal: VerifiedPrincipal | None = None,
+        principal: VerifiedPrincipal,
     ) -> dict:
-        if principal is None:
-            actor = {"type": "system", "name": "paper_execution_service"}
-        elif isinstance(principal, VerifiedPrincipal):
-            self._authorization.require_trade(principal, account_id, trade_id)
-            actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
-        else:
-            raise ValueError("El principal debe estar verificado")
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para cerrar PAPER")
+        self._authorization.require_trade(principal, account_id, trade_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
         trade = self._ledger.get_trade(trade_id)
         if trade is None:
             raise ValueError("Operación no encontrada")
@@ -405,33 +398,25 @@ class PaperExecutionService:
         return CircuitBreaker(self._connection, account_id).status()
 
     def halt(
-        self, account_id: str, reason: str, *, principal: VerifiedPrincipal | None = None,
+        self, account_id: str, reason: str, *, principal: VerifiedPrincipal,
     ) -> dict:
-        if principal is None:
-            actor = {"type": "system", "name": "paper_execution_service"}
-            updated_by = "paper_execution_service"
-        elif isinstance(principal, VerifiedPrincipal):
-            self._authorization.require_account(principal, account_id)
-            actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
-            updated_by = principal.subject
-        else:
-            raise ValueError("El principal debe estar verificado")
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para detener PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        updated_by = principal.subject
         return CircuitBreaker(self._connection, account_id).halt(
             reason, updated_by=updated_by, actor=actor,
         )
 
     def reset_circuit_breaker(
-        self, account_id: str, *, principal: VerifiedPrincipal | None = None,
+        self, account_id: str, *, principal: VerifiedPrincipal,
     ) -> dict:
-        if principal is None:
-            actor = {"type": "system", "name": "paper_execution_service"}
-            confirmed_by = "paper_execution_service"
-        elif isinstance(principal, VerifiedPrincipal):
-            self._authorization.require_account(principal, account_id)
-            actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
-            confirmed_by = principal.subject
-        else:
-            raise ValueError("El principal debe estar verificado")
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para rearmar PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        confirmed_by = principal.subject
         return CircuitBreaker(self._connection, account_id).reset(
             confirmed_by=confirmed_by, actor=actor,
         )
