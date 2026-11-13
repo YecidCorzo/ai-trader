@@ -135,17 +135,23 @@ def list_paper_accounts(
     principal: VerifiedPrincipal = Depends(get_verified_principal),
 ):
     rows = connection.execute(
-        """SELECT account.*,
-                  COALESCE((SELECT SUM(event.amount) FROM paper_account_events AS event
-                            WHERE event.account_id = account.id), 0) AS balance
-           FROM paper_accounts AS account
-           WHERE account.owner_issuer = ? AND account.owner_subject = ?
-           ORDER BY account.created_at DESC, account.id""",
+        """SELECT * FROM paper_accounts
+           WHERE owner_issuer = ? AND owner_subject = ?
+           ORDER BY created_at DESC, id""",
         (principal.issuer, principal.subject),
     ).fetchall()
+    accounts = []
+    for row in rows:
+        events = connection.execute(
+            "SELECT amount FROM paper_account_events WHERE account_id = ? ORDER BY sequence",
+            (row["id"],),
+        ).fetchall()
+        item = dict(row)
+        item["balance"] = sum((Decimal(event["amount"]) for event in events), Decimal("0"))
+        accounts.append(item)
     return {
         "mode": "paper",
-        "accounts": [dict(row) for row in rows],
+        "accounts": accounts,
         "live_trading_authorized": False,
     }
 
@@ -179,10 +185,11 @@ def get_paper_account(
     try:
         _authorization(connection).require_account(principal, account_id)
         account = accounts.get_account(account_id)
-        balance_row = connection.execute(
-            "SELECT COALESCE(SUM(amount), 0) AS balance FROM paper_account_events WHERE account_id = ?",
+        balance_rows = connection.execute(
+            "SELECT amount FROM paper_account_events WHERE account_id = ? ORDER BY sequence",
             (account_id,),
-        ).fetchone()
+        ).fetchall()
+        balance = sum((Decimal(row["amount"]) for row in balance_rows), Decimal("0"))
         equity = accounts.get_equity(account_id)
         free_cash = accounts.calculate_free_cash(account_id)
         positions = connection.execute(
@@ -194,7 +201,7 @@ def get_paper_account(
         return {
             "mode": "paper",
             "account": account,
-            "balance": Decimal(str(balance_row["balance"])),
+            "balance": balance,
             "equity": equity,
             "free_cash": free_cash,
             "open_positions": [dict(row) for row in positions],
@@ -369,9 +376,12 @@ def list_paper_account_events(
         ).fetchall()
         trade_events = connection.execute(
             """SELECT event.* FROM paper_trade_events AS event
-               JOIN paper_trades AS trade ON trade.id = event.trade_id
-               WHERE trade.paper_account_id = ? ORDER BY event.sequence""",
-            (account_id,),
+               LEFT JOIN paper_trades AS trade ON trade.id = event.trade_id
+               WHERE trade.paper_account_id = ?
+                  OR (event.trade_id IS NULL
+                      AND json_extract(event.details_json, '$.account_id') = ?)
+               ORDER BY event.sequence""",
+            (account_id, account_id),
         ).fetchall()
         return {
             "mode": "paper",
