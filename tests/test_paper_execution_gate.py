@@ -424,5 +424,31 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.assertEqual(self.accounts.get_equity(self.account["id"]), Decimal("9910"))
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
 
+    def test_withdrawal_cannot_consume_cash_committed_to_open_positions(self):
+        self.execution = PaperExecutionService(
+            self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
+            account_service=self.accounts,
+        )
+        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
+            self.accounts.record_funding(
+                self.account["id"], event_type="WITHDRAWAL", amount="1001",
+                idempotency_key="withdraw-committed-cash",
+            )
+        self.assertEqual(self.accounts.calculate_free_cash(self.account["id"]), Decimal("1000"))
+
+    def test_negative_adjustment_cannot_consume_cash_committed_to_open_positions(self):
+        self.execution = PaperExecutionService(
+            self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
+            account_service=self.accounts,
+        )
+        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
+            self.accounts.record_funding(
+                self.account["id"], event_type="ADJUSTMENT", amount="-1001",
+                idempotency_key="adjust-committed-cash",
+            )
+        self.assertEqual(self.accounts.calculate_free_cash(self.account["id"]), Decimal("1000"))
+
 if __name__ == "__main__":
     unittest.main()
