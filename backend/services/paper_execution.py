@@ -9,12 +9,16 @@ from decimal import Decimal, InvalidOperation
 
 try:
     from backend.repositories.paper_trading_repository import PaperTradingRepository
+    from backend.security.principal import VerifiedPrincipal
+    from backend.services.paper_authorization import PaperAuthorizationService
     from backend.services.circuit_breaker import CircuitBreaker
     from backend.services.paper_account import PaperAccountService
     from backend.services.risk_engine import RiskEngine, RiskSnapshot
     from backend.services.trade_ledger import TradeLedger
 except ImportError:  # Support uvicorn with backend/ as the app directory.
     from repositories.paper_trading_repository import PaperTradingRepository
+    from security.principal import VerifiedPrincipal
+    from services.paper_authorization import PaperAuthorizationService
     from services.circuit_breaker import CircuitBreaker
     from services.paper_account import PaperAccountService
     from services.risk_engine import RiskEngine, RiskSnapshot
@@ -96,6 +100,7 @@ class PaperExecutionService:
     ) -> None:
         self._connection = connection
         self._repository = PaperTradingRepository(connection)
+        self._authorization = PaperAuthorizationService(connection)
         self._ledger = TradeLedger(connection)
         self._risk_engine = risk_engine or RiskEngine()
         self._accounts = account_service or PaperAccountService(connection)
@@ -103,11 +108,19 @@ class PaperExecutionService:
     def open_position(
         self, *, account_id: str, symbol: str, strategy: str, side: str,
         quantity: Decimal | str, stop_price: Decimal | str,
+        principal: VerifiedPrincipal, idempotency_key: str,
         entry_fee: Decimal | str = "0",
         estimated_exit_fee: Decimal | str = "0", metadata: dict | None = None,
     ) -> dict:
         if not account_id or not account_id.strip():
             raise ValueError("account_id es obligatorio")
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para abrir PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        key = idempotency_key.strip() if isinstance(idempotency_key, str) else ""
+        if not key:
+            raise ValueError("idempotency_key es obligatorio")
         account = self._accounts.get_account(account_id)
         normalized_symbol = _validate_account_symbol(
             symbol, account["quote_currency"]
