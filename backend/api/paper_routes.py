@@ -147,7 +147,7 @@ def list_paper_accounts(
             (row["id"],),
         ).fetchall()
         item = dict(row)
-        item["balance"] = sum((Decimal(event["amount"]) for event in events), Decimal("0"))
+        item["balance"] = str(sum((Decimal(event["amount"]) for event in events), Decimal("0")))
         accounts.append(item)
     return {
         "mode": "paper",
@@ -201,9 +201,9 @@ def get_paper_account(
         return {
             "mode": "paper",
             "account": account,
-            "balance": balance,
-            "equity": equity,
-            "free_cash": free_cash,
+            "balance": str(balance),
+            "equity": str(equity),
+            "free_cash": str(free_cash),
             "open_positions": [dict(row) for row in positions],
             "risk": CircuitBreaker(connection, account_id).status(),
             "live_trading_authorized": False,
