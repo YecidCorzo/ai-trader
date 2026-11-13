@@ -260,10 +260,14 @@ def open_paper_trade(
 ):
     try:
         _authorization(connection).require_account(principal, account_id)
+        normalized_strategy = payload.strategy.strip()
+        normalized_symbol = payload.symbol.strip().upper()
+        if not normalized_strategy or not normalized_symbol:
+            raise HTTPException(status_code=422, detail="symbol y strategy son obligatorios")
         trade = execution.open_position(
             account_id=account_id,
-            symbol=payload.symbol.upper(),
-            strategy=payload.strategy,
+            symbol=normalized_symbol,
+            strategy=normalized_strategy,
             side=payload.side,
             stop_price=payload.stop_price,
             principal=principal,
