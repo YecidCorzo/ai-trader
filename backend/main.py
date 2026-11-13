@@ -19,6 +19,10 @@ from services.backtest_review import review_backtest
 from services.backtest_research import run_walk_forward_backtests, run_advanced_strategy_walk_forward_backtests
 from services.strategy_acceptance import evaluate_advanced_strategy_go_no_go
 from services.multi_timeframe_analysis import MultiTimeframeAnalysisService
+try:
+    from backend.api.paper_routes import router as paper_router
+except ImportError:
+    from api.paper_routes import router as paper_router
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +33,7 @@ def _internal_server_error(operation):
 
 
 app = FastAPI(title="AI Trader API")
+app.include_router(paper_router)
 market_service = MarketService("SOLUSDT")
 strategy = EmaRsiStrategy()
 app.add_middleware(
