@@ -108,7 +108,11 @@ class PaperExecutionGateTests(unittest.TestCase):
         trade = self.open_position()
         self.assertEqual(trade["status"], "OPEN")
         self.assertEqual(trade["paper_account_id"], self.account["id"])
-        self.assertEqual(self.accounts.get_equity(self.account["id"]), Decimal("9999.9"))
+        self.assertGreater(Decimal(trade["entry_price"]), Decimal("100"))
+        self.assertGreater(Decimal(trade["entry_fee"]), Decimal("0"))
+        metadata = json.loads(trade["metadata_json"])
+        self.assertLessEqual(Decimal(metadata["planned_loss"]), Decimal("100"))
+        self.assertLessEqual(Decimal(metadata["risk_ratio"]), Decimal("0.01"))
         self.assertEqual(self.accounts.get_account(self.account["id"])["quote_currency"], "USDT")
 
     def test_risk_gate_does_not_accept_caller_controlled_equity(self):
@@ -127,13 +131,14 @@ class PaperExecutionGateTests(unittest.TestCase):
             opening_capital="100", idempotency_key="small-opening",
             principal=self.principal,
         )
-        with self.assertRaises(RiskRejectedError) as raised:
-            self.open_position(
-                account_id=small["id"],
-                stop_price="95",
-                entry_fee="0", estimated_exit_fee="0",
-            )
-        self.assertEqual(raised.exception.reason, "per_trade_risk_limit_exceeded")
+        trade = self.open_position(
+            account_id=small["id"], stop_price="95",
+            entry_fee="0", estimated_exit_fee="0",
+        )
+        self.assertLessEqual(
+            Decimal(json.loads(trade["metadata_json"])["planned_loss"]),
+            Decimal("1"),
+        )
 
     def test_binance_symbol_must_have_a_valid_base_and_exact_quote_asset(self):
         invalid_symbols = [
@@ -202,7 +207,8 @@ class PaperExecutionGateTests(unittest.TestCase):
         )
         self.provider.price = Decimal("70")
         self.execution.close_position(prior["id"], account_id=self.account["id"], principal=self.principal)
-        self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("9700"))
+        self.assertLess(self.accounts.calculate_equity(self.account["id"]), Decimal("10000"))
+        self.assertLess(Decimal(closed["realized_pnl"]), Decimal("0"))
         self.provider.price = Decimal("100")
         with self.assertRaises(RiskRejectedError) as raised:
             self.open_position()
@@ -215,7 +221,12 @@ class PaperExecutionGateTests(unittest.TestCase):
         closed = self.execution.close_position(
             trade["id"], account_id=self.account["id"], exit_fee="0.1", principal=self.principal
         )
-        self.assertEqual(Decimal(closed["realized_pnl"]), Decimal("9.8"))
+        quantity = Decimal(closed["quantity"])
+        gross = quantity * (Decimal(closed["exit_price"]) - Decimal(closed["entry_price"]))
+        expected_net = gross - Decimal(closed["entry_fee"]) - Decimal(closed["exit_fee"])
+        self.assertEqual(Decimal(closed["realized_pnl"]), expected_net)
+        self.assertLess(Decimal(closed["exit_price"]), Decimal("110"))
+        self.assertGreaterEqual(Decimal(closed["exit_fee"]), quantity * Decimal(closed["exit_price"]) * Decimal("0.001"))
         events = self.connection.execute(
             """SELECT amount, idempotency_key FROM paper_account_events
                WHERE account_id = ? AND event_type = 'TRADE_REALIZED_PNL'""",
@@ -424,12 +435,12 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
             account_service=self.accounts,
         )
-        self.open_position(stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
-        self.provider.price = Decimal("99")
+        self.open_position(stop_price="98.8", entry_fee="0", estimated_exit_fee="0")
+        self.provider.price = Decimal("80")
         with self.assertRaises(RiskRejectedError) as raised:
-            self.open_position(stop_price="98.99", entry_fee="0", estimated_exit_fee="0")
+            self.open_position(stop_price="79.99", entry_fee="0", estimated_exit_fee="0")
         self.assertEqual(raised.exception.reason, "committed_capital_exceeds_equity")
-        self.assertEqual(self.accounts.get_equity(self.account["id"]), Decimal("9910"))
+        self.assertLess(self.accounts.get_equity(self.account["id"]), Decimal("10000"))
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
 
     def test_withdrawal_cannot_consume_cash_committed_to_open_positions(self):
@@ -443,7 +454,7 @@ class PaperExecutionGateTests(unittest.TestCase):
                 self.account["id"], event_type="WITHDRAWAL", amount="1001",
                 idempotency_key="withdraw-committed-cash",
             )
-        self.assertEqual(self.accounts.calculate_free_cash(self.account["id"]), Decimal("1000"))
+        self.assertLess(self.accounts.calculate_free_cash(self.account["id"]), Decimal("1"))
 
     def test_negative_adjustment_cannot_consume_cash_committed_to_open_positions(self):
         self.execution = PaperExecutionService(
@@ -499,6 +510,43 @@ class PaperExecutionGateTests(unittest.TestCase):
             self.open_position(idempotency_key="stable-open-request")
         self.assertEqual(raised.exception.reason, "idempotency_key_conflict")
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE paper_account_id = ?", (self.account["id"],)).fetchone()[0], 1)
+
+    def test_engine_owns_long_and_short_fills_fees_and_sizing(self):
+        long_trade = self.open_position(side="LONG", stop_price="95", entry_fee="0", estimated_exit_fee="0")
+        long_metadata = json.loads(long_trade["metadata_json"])
+        self.assertGreater(Decimal(long_trade["entry_price"]), Decimal(long_metadata["entry_quote"]))
+        self.assertGreater(Decimal(long_trade["entry_fee"]), Decimal(long_trade["quantity"]) * Decimal(long_trade["entry_price"]) * Decimal("0.001") - Decimal("0.00000001"))
+        self.assertLessEqual(Decimal(long_metadata["planned_loss"]), Decimal("100"))
+        self.provider.price = Decimal("110")
+        long_closed = self.execution.close_position(long_trade["id"], account_id=self.account["id"], principal=self.principal)
+        self.assertLess(Decimal(long_closed["exit_price"]), Decimal("110"))
+
+        second = self.accounts.create_account(
+            name="Short demo", quote_currency="USDT", opening_capital="10000",
+            idempotency_key="short-opening", principal=self.principal,
+        )
+        short_trade = self.open_position(
+            account_id=second["id"], side="SHORT", stop_price="105",
+            entry_fee="0", estimated_exit_fee="0",
+        )
+        short_metadata = json.loads(short_trade["metadata_json"])
+        self.assertLess(Decimal(short_trade["entry_price"]), Decimal(short_metadata["entry_quote"]))
+        self.provider.price = Decimal("90")
+        short_closed = self.execution.close_position(short_trade["id"], account_id=second["id"], principal=self.principal)
+        self.assertGreater(Decimal(short_closed["exit_price"]), Decimal("90"))
+
+    def test_risk_fraction_cannot_exceed_one_percent_engine_limit(self):
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position(risk_fraction="0.010001")
+        self.assertEqual(raised.exception.reason, "risk_fraction_exceeds_engine_limit")
+
+    def test_quantity_is_not_a_caller_controlled_execution_input(self):
+        with self.assertRaises(TypeError):
+            self.execution.open_position(
+                account_id=self.account["id"], symbol="SOLUSDT", strategy="ema-rsi",
+                side="LONG", quantity="999999", stop_price="95",
+                principal=self.principal, idempotency_key="caller-quantity",
+            )
 
     def test_verified_actor_is_persisted_on_open_close_halt_and_reset(self):
         trade = self.open_position(idempotency_key="actor-audit-open")
