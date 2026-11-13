@@ -155,6 +155,26 @@ class PaperExecutionService:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             now = datetime.now(timezone.utc)
+            existing = self._connection.execute(
+                "SELECT * FROM paper_trades WHERE paper_account_id = ? AND idempotency_key = ?",
+                (account_id, key),
+            ).fetchone()
+            if existing is not None:
+                existing_metadata = json.loads(existing["metadata_json"] or "{}")
+                same_request = (
+                    existing["symbol"] == normalized_symbol
+                    and existing["strategy"] == strategy.strip()
+                    and existing["side"] == side
+                    and Decimal(existing["quantity"]) == qty
+                    and Decimal(existing["entry_fee"]) == opening_fee
+                    and existing_metadata.get("stop_price") == str(stop)
+                    and existing_metadata.get("actor") == actor
+                    and existing_metadata.get("estimated_exit_fee") == str(exit_fee)
+                )
+                self._connection.rollback()
+                if same_request:
+                    return dict(existing)
+                raise RiskRejectedError("idempotency_key_conflict")
             open_positions = self._repository.count_open_trades(account_id)
             if open_positions >= self._risk_engine.limits.max_open_positions:
                 self._connection.rollback()
@@ -210,11 +230,14 @@ class PaperExecutionService:
                 "estimated_exit_fee": str(exit_fee),
                 "risk_ratio": str(decision.risk_ratio),
                 "equity_source": "persisted_paper_account",
+                "idempotency_key": key,
+                "actor": actor,
             })
             return self._ledger.open_trade(
                 symbol=normalized_symbol, strategy=strategy, side=side,
                 quantity=qty, entry_price=entry, entry_fee=opening_fee,
                 metadata=trade_metadata, paper_account_id=account_id,
+                idempotency_key=key, actor=actor,
             )
         except RiskRejectedError:
             raise
