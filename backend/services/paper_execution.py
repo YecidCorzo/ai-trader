@@ -9,12 +9,16 @@ from decimal import Decimal, InvalidOperation
 
 try:
     from backend.repositories.paper_trading_repository import PaperTradingRepository
+    from backend.security.principal import VerifiedPrincipal
+    from backend.services.paper_authorization import PaperAuthorizationService
     from backend.services.circuit_breaker import CircuitBreaker
     from backend.services.paper_account import PaperAccountService
     from backend.services.risk_engine import RiskEngine, RiskSnapshot
     from backend.services.trade_ledger import TradeLedger
 except ImportError:  # Support uvicorn with backend/ as the app directory.
     from repositories.paper_trading_repository import PaperTradingRepository
+    from security.principal import VerifiedPrincipal
+    from services.paper_authorization import PaperAuthorizationService
     from services.circuit_breaker import CircuitBreaker
     from services.paper_account import PaperAccountService
     from services.risk_engine import RiskEngine, RiskSnapshot
@@ -96,6 +100,7 @@ class PaperExecutionService:
     ) -> None:
         self._connection = connection
         self._repository = PaperTradingRepository(connection)
+        self._authorization = PaperAuthorizationService(connection)
         self._ledger = TradeLedger(connection)
         self._risk_engine = risk_engine or RiskEngine()
         self._accounts = account_service or PaperAccountService(connection)
@@ -103,11 +108,19 @@ class PaperExecutionService:
     def open_position(
         self, *, account_id: str, symbol: str, strategy: str, side: str,
         quantity: Decimal | str, stop_price: Decimal | str,
+        principal: VerifiedPrincipal, idempotency_key: str,
         entry_fee: Decimal | str = "0",
         estimated_exit_fee: Decimal | str = "0", metadata: dict | None = None,
     ) -> dict:
         if not account_id or not account_id.strip():
             raise ValueError("account_id es obligatorio")
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para abrir PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        key = idempotency_key.strip() if isinstance(idempotency_key, str) else ""
+        if not key:
+            raise ValueError("idempotency_key es obligatorio")
         account = self._accounts.get_account(account_id)
         normalized_symbol = _validate_account_symbol(
             symbol, account["quote_currency"]
@@ -142,6 +155,26 @@ class PaperExecutionService:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             now = datetime.now(timezone.utc)
+            existing = self._connection.execute(
+                "SELECT * FROM paper_trades WHERE paper_account_id = ? AND idempotency_key = ?",
+                (account_id, key),
+            ).fetchone()
+            if existing is not None:
+                existing_metadata = json.loads(existing["metadata_json"] or "{}")
+                same_request = (
+                    existing["symbol"] == normalized_symbol
+                    and existing["strategy"] == strategy.strip()
+                    and existing["side"] == side
+                    and Decimal(existing["quantity"]) == qty
+                    and Decimal(existing["entry_fee"]) == opening_fee
+                    and existing_metadata.get("stop_price") == str(stop)
+                    and existing_metadata.get("actor") == actor
+                    and existing_metadata.get("estimated_exit_fee") == str(exit_fee)
+                )
+                self._connection.rollback()
+                if same_request:
+                    return dict(existing)
+                raise RiskRejectedError("idempotency_key_conflict")
             open_positions = self._repository.count_open_trades(account_id)
             if open_positions >= self._risk_engine.limits.max_open_positions:
                 self._connection.rollback()
@@ -197,11 +230,14 @@ class PaperExecutionService:
                 "estimated_exit_fee": str(exit_fee),
                 "risk_ratio": str(decision.risk_ratio),
                 "equity_source": "persisted_paper_account",
+                "idempotency_key": key,
+                "actor": actor,
             })
             return self._ledger.open_trade(
                 symbol=normalized_symbol, strategy=strategy, side=side,
                 quantity=qty, entry_price=entry, entry_fee=opening_fee,
                 metadata=trade_metadata, paper_account_id=account_id,
+                idempotency_key=key, actor=actor,
             )
         except RiskRejectedError:
             raise
@@ -212,7 +248,12 @@ class PaperExecutionService:
     def close_position(
         self, trade_id: str, *, account_id: str,
         exit_fee: Decimal | str = "0", exit_reason: str | None = None,
+        principal: VerifiedPrincipal,
     ) -> dict:
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para cerrar PAPER")
+        self._authorization.require_trade(principal, account_id, trade_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
         trade = self._ledger.get_trade(trade_id)
         if trade is None:
             raise ValueError("Operación no encontrada")
@@ -230,12 +271,13 @@ class PaperExecutionService:
             raise ValueError("No hay un precio de mercado actual para cerrar la operación")
         return self._close_position_with_quote(
             trade_id, account_id=account_id, quote=quote,
-            exit_fee=closing_fee, exit_reason=exit_reason,
+            exit_fee=closing_fee, exit_reason=exit_reason, actor=actor,
         )
 
     def _close_position_with_quote(
         self, trade_id: str, *, account_id: str, quote,
         exit_fee: Decimal, exit_reason: str | None,
+        actor: dict | None = None,
     ) -> dict:
         """Close at an observed public-market quote; never substitute the stop price."""
         try:
@@ -251,7 +293,7 @@ class PaperExecutionService:
             self._accounts.persist_price_quotes([quote], now=now)
             closed = self._ledger.close_trade(
                 trade_id, exit_price=quote.price,
-                exit_fee=exit_fee, exit_reason=exit_reason,
+                exit_fee=exit_fee, exit_reason=exit_reason, actor=actor,
             )
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
@@ -325,6 +367,7 @@ class PaperExecutionService:
                 result = self._close_position_with_quote(
                     trade["id"], account_id=account_id, quote=quote,
                     exit_fee=estimated_fee, exit_reason="stop_loss_triggered",
+                    actor={"type": "system", "name": "paper_stop_worker"},
                 )
             except ValueError as error:
                 # Another worker may have closed this position after the scan.
@@ -355,15 +398,25 @@ class PaperExecutionService:
         return CircuitBreaker(self._connection, account_id).status()
 
     def halt(
-        self, account_id: str, reason: str, *, updated_by: str = "operator",
+        self, account_id: str, reason: str, *, principal: VerifiedPrincipal,
     ) -> dict:
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para detener PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        updated_by = principal.subject
         return CircuitBreaker(self._connection, account_id).halt(
-            reason, updated_by=updated_by,
+            reason, updated_by=updated_by, actor=actor,
         )
 
     def reset_circuit_breaker(
-        self, account_id: str, *, confirmed_by: str,
+        self, account_id: str, *, principal: VerifiedPrincipal,
     ) -> dict:
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para rearmar PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+        confirmed_by = principal.subject
         return CircuitBreaker(self._connection, account_id).reset(
-            confirmed_by=confirmed_by,
+            confirmed_by=confirmed_by, actor=actor,
         )

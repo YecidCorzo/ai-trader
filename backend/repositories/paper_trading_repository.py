@@ -21,12 +21,13 @@ class PaperTradingRepository:
         self._connection.execute(
             """INSERT INTO paper_trades
                (id, symbol, strategy, side, quantity, entry_price, entry_fee,
-                status, opened_at, metadata_json, paper_account_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)""",
+                status, opened_at, metadata_json, paper_account_id, idempotency_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)""",
             (
                 trade["id"], trade["symbol"], trade["strategy"], trade["side"],
                 trade["quantity"], trade["entry_price"], trade["entry_fee"],
                 trade["opened_at"], trade["metadata_json"], trade.get("paper_account_id"),
+                trade.get("idempotency_key"),
             ),
         )
         self.add_event(

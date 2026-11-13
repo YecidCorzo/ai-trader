@@ -219,6 +219,7 @@ class PaperAccountOwnershipTests(unittest.TestCase):
             account_id=self.account_a["id"], symbol="SOLUSDT",
             strategy="ownership-test", side="LONG", quantity="1",
             stop_price="95", entry_fee="0", estimated_exit_fee="0",
+            principal=self.owner_a, idempotency_key="auth-boundary-open",
         )
         self.assertEqual(
             self.authorization.require_trade(

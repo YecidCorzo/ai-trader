@@ -55,6 +55,8 @@ class PaperStopMonitorTests(unittest.TestCase):
             stop_price=stop,
             entry_fee="0.1",
             estimated_exit_fee="0.1",
+            principal=self.principal,
+            idempotency_key=f"stop-{side}-{stop}",
         )
 
     def test_long_stop_closes_at_observed_gap_price_not_stop_price(self):
