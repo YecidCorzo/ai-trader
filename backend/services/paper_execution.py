@@ -153,8 +153,8 @@ class PaperExecutionService:
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
             metrics = self._repository.risk_metrics(
-                day_start=day_start.isoformat(timespec="seconds").replace("+00:00", "Z"),
-                day_end=day_end.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                day_start=day_start.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                day_end=day_end.isoformat(timespec="microseconds").replace("+00:00", "Z"),
                 loss_streak_limit=self._risk_engine.limits.max_consecutive_losses,
                 account_id=account_id,
             )
@@ -309,6 +309,24 @@ class PaperExecutionService:
                 raise
             closed.append(result)
         return closed
+    def reconcile_account(self, account_id: str) -> dict:
+        """Expose reconciliation and halt PAPER entries if the ledger is inconsistent."""
+        try:
+            from backend.services.paper_reconciliation import reconcile_realized_pnl
+        except ImportError:
+            from services.paper_reconciliation import reconcile_realized_pnl
+        self._accounts.get_account(account_id)
+        result = reconcile_realized_pnl(self._connection, account_id)
+        if not result["consistent"]:
+            result["alert"] = "PAPER_LEDGER_INCONSISTENT"
+            result["circuit_breaker"] = CircuitBreaker(self._connection, account_id).halt(
+                "PAPER ledger reconciliation mismatch", updated_by="reconciliation"
+            )
+        else:
+            result["alert"] = None
+            result["circuit_breaker"] = CircuitBreaker(self._connection, account_id).status()
+        return result
+
     def circuit_breaker_status(self, account_id: str) -> dict:
         return CircuitBreaker(self._connection, account_id).status()
 
