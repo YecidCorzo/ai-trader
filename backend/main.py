@@ -144,6 +144,7 @@ def get_signal_v2():
         # Convertir las velas al formato que usan los indicadores
         candles = [
             {
+                "time": int(row[0] / 1000),
                 "open": float(row[1]),
                 "high": float(row[2]),
                 "low": float(row[3]),
