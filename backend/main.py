@@ -14,6 +14,7 @@ from indicators.atr import calculate_atr
 from strategies.ema_rsi_strategy import EmaRsiStrategy
 from strategies.advanced_strategy import AdvancedStrategy
 from services.backtest_service import BacktestService
+from services.advanced_strategy_backtest import AdvancedStrategyBacktestService
 from services.backtest_review import review_backtest
 from services.backtest_research import run_walk_forward_backtests
 
@@ -257,6 +258,40 @@ def run_backtest(
 
     
 
+
+@app.get("/api/backtest/advanced")
+def run_advanced_backtest(
+    limit: int = Query(5000, ge=100, le=100000),
+    interval: str = Query("5m"),
+):
+    """Backtest the same AdvancedStrategy.evaluate logic used by /api/signal/v2."""
+    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
+    if interval not in allowed_intervals:
+        raise HTTPException(status_code=400, detail="Intervalo no soportado")
+    try:
+        raw_candles = market_service.get_candles(
+            interval=interval, limit=limit, closed_only=True,
+        )
+        validate_signal_history([float(row[4]) for row in raw_candles], minimum=52)
+        backtester = AdvancedStrategyBacktestService(
+            initial_balance=10000.0, fee_rate=0.001,
+            slippage_rate=0.0005, risk_per_trade=0.01,
+        )
+        result = backtester.run(raw_candles)
+        result.update({
+            "symbol": "SOL/USDT",
+            "interval": interval,
+            "candles_requested": limit,
+            "candles_received": len(raw_candles),
+            "history_start": raw_candles[0][0],
+            "history_end": raw_candles[-1][0],
+            "mode": "paper",
+        })
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise _internal_server_error("advanced_strategy_backtest") from None
 
 @app.get("/api/backtest/walk-forward")
 def run_walk_forward(
