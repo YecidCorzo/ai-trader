@@ -93,6 +93,29 @@ Check `/health`, then configure the frontend to obtain an OIDC access token
 and send it as `Authorization: Bearer <access-token>`. Create a PAPER account
 with explicit fictional capital before opening a simulated trade.
 
+## 6. First API smoke test
+
+Open `http://127.0.0.1:8000/docs`, select **Authorize**, and paste the
+OIDC access token. Swagger sends it as a Bearer token. The same flow can be
+used from curl:
+
+```sh
+export AI_TRADER_ACCESS_TOKEN="ACCESS_TOKEN_FROM_YOUR_OIDC_PROVIDER"
+
+curl -sS http://127.0.0.1:8000/api/paper/accounts \
+  -H "Authorization: Bearer $AI_TRADER_ACCESS_TOKEN"
+
+curl -sS -X POST http://127.0.0.1:8000/api/paper/accounts \
+  -H "Authorization: Bearer $AI_TRADER_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Acceptance PAPER","quote_currency":"USDT","opening_capital":"10000","idempotency_key":"acceptance-opening-001"}'
+```
+
+Use the returned account ID to read equity/free cash, list trades, open a
+simulated position and inspect ledger events. Do not paste a real exchange
+secret or private key into these requests; the access token is issued by the
+OIDC identity provider, not by Binance.
+
 ## Safety boundaries
 
 - No live exchange endpoints, order routing or exchange API credentials are
