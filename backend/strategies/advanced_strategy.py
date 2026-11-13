@@ -27,6 +27,22 @@ class AdvancedStrategy:
         self.min_ema_slope_percent = min_ema_slope_percent
         self.min_volume_ratio = min_volume_ratio
         self.volume_mean_period = volume_mean_period
+        numeric_settings = (
+            self.min_atr_percent, self.max_atr_percent,
+            self.min_ema_slope_percent, self.min_volume_ratio,
+        )
+        if not all(math.isfinite(float(value)) for value in numeric_settings):
+            raise ValueError("Los filtros de régimen deben ser valores finitos")
+        if self.min_atr_percent < 0 or self.max_atr_percent <= self.min_atr_percent:
+            raise ValueError("La banda ATR% debe ser positiva y creciente")
+        if self.min_ema_slope_percent < 0 or self.min_volume_ratio <= 0:
+            raise ValueError("Los umbrales de pendiente y volumen deben ser positivos")
+        if (
+            not isinstance(self.volume_mean_period, int)
+            or isinstance(self.volume_mean_period, bool)
+            or self.volume_mean_period < 1
+        ):
+            raise ValueError("volume_mean_period debe ser un entero positivo")
 
     def evaluate(
         self,
