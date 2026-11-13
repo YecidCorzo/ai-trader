@@ -44,6 +44,18 @@ class AdvancedStrategy:
                 "take_profit_2": None,
                 "invalidation": None,
                 "risk_reward": self.risk_reward,
+                "long_score": 0,
+                "short_score": 0,
+                "category_scores": {
+                    "trend": {"long": 0, "short": 0, "max": 40},
+                    "momentum": {"long": 0, "short": 0, "max": 30},
+                    "volume": {"long": 0, "short": 0, "max": 15},
+                    "structure": {"long": 0, "short": 0, "max": 15},
+                },
+                "category_confirmations": {
+                    "long": {"trend": False, "momentum": False, "volume": False},
+                    "short": {"trend": False, "momentum": False, "volume": False},
+                },
                 "reasons": ["ATR no válido: riesgo no calculable"],
                 "mode": "paper"
             }
