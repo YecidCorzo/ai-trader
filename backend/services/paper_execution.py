@@ -398,15 +398,23 @@ class PaperExecutionService:
         return CircuitBreaker(self._connection, account_id).status()
 
     def halt(
-        self, account_id: str, reason: str, *, updated_by: str = "operator",
+        self, account_id: str, reason: str, *, principal: VerifiedPrincipal,
     ) -> dict:
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para detener PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
         return CircuitBreaker(self._connection, account_id).halt(
-            reason, updated_by=updated_by,
+            reason, updated_by=principal.subject, actor=actor,
         )
 
     def reset_circuit_breaker(
-        self, account_id: str, *, confirmed_by: str,
+        self, account_id: str, *, principal: VerifiedPrincipal,
     ) -> dict:
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para rearmar PAPER")
+        self._authorization.require_account(principal, account_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
         return CircuitBreaker(self._connection, account_id).reset(
-            confirmed_by=confirmed_by,
+            confirmed_by=principal.subject, actor=actor,
         )
