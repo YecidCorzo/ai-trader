@@ -115,6 +115,8 @@ def _authorization(connection):
 
 
 def _raise_paper_error(error):
+    if isinstance(error, HTTPException):
+        raise error
     if isinstance(error, PaperResourceNotFoundError):
         raise HTTPException(status_code=404, detail="Recurso PAPER no encontrado") from None
     if isinstance(error, RiskRejectedError):
