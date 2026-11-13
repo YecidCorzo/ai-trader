@@ -20,6 +20,8 @@ def _decimal(value: Decimal | str | int, field: str, *, allow_zero: bool = False
         raise ValueError(f"{field} debe ser un decimal válido") from None
     if not result.is_finite() or result < 0 or (not allow_zero and result == 0):
         raise ValueError(f"{field} debe ser {'no negativo' if allow_zero else 'positivo'} y finito")
+    if max(0, -result.as_tuple().exponent) > 8:
+        raise ValueError(f"{field} supera 8 decimales")
     return result
 
 
