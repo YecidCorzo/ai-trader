@@ -25,6 +25,47 @@ class AdvancedStrategyVwapTests(unittest.TestCase):
         self.assertTrue(any("VWAP no disponible" in reason for reason in result["reasons"]))
 
 
+class AdvancedStrategyCategoryConfirmationTests(unittest.TestCase):
+    @staticmethod
+    def candles():
+        prior = {"high": 100.0, "low": 98.0, "close": 99.0, "volume": 10.0}
+        last = {"high": 101.0, "low": 99.0, "close": 100.5, "volume": 10.0}
+        return [dict(prior) for _ in range(5)] + [last]
+
+    def test_long_requires_trend_momentum_and_volume_categories(self):
+        strategy = AdvancedStrategy()
+        missing_volume = strategy.evaluate(
+            candles=self.candles(),
+            ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=None, atr=2.0,
+        )
+        self.assertEqual(missing_volume["signal"], "NEUTRAL")
+        self.assertTrue(missing_volume["category_confirmations"]["long"]["trend"])
+        self.assertTrue(missing_volume["category_confirmations"]["long"]["momentum"])
+        self.assertFalse(missing_volume["category_confirmations"]["long"]["volume"])
+
+        confirmed = strategy.evaluate(
+            candles=self.candles(),
+            ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=2.0,
+        )
+        self.assertEqual(confirmed["signal"], "LONG")
+        self.assertEqual(confirmed["category_scores"]["trend"]["long"], 40)
+        self.assertEqual(confirmed["category_scores"]["momentum"]["long"], 30)
+        self.assertEqual(confirmed["category_scores"]["volume"]["long"], 15)
+
+    def test_momentum_and_volume_cannot_replace_trend_confirmation(self):
+        result = AdvancedStrategy().evaluate(
+            candles=self.candles(),
+            ema_fast=100.0, ema_slow=100.0, ema_trend=101.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=2.0,
+        )
+        self.assertEqual(result["signal"], "NEUTRAL")
+        self.assertFalse(result["category_confirmations"]["long"]["trend"])
+        self.assertTrue(result["category_confirmations"]["long"]["momentum"])
+        self.assertTrue(result["category_confirmations"]["long"]["volume"])
+
+
 class AdvancedStrategyInvalidationTests(unittest.TestCase):
     @staticmethod
     def candles(direction):
