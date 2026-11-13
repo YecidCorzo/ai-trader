@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from uuid import uuid4
 
 from backend.infrastructure.database import apply_migrations, connect_database
 from backend.security.principal import VerifiedPrincipal
@@ -64,6 +65,8 @@ class PaperExecutionGateTests(unittest.TestCase):
             "stop_price": "95",
             "entry_fee": "0.1",
             "estimated_exit_fee": "0.1",
+            "principal": self.principal,
+            "idempotency_key": str(uuid4()),
         }
         values.update(overrides)
         return self.execution.open_position(**values)
@@ -179,7 +182,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             opening_capital="10000", idempotency_key="independent-opening",
             principal=self.principal,
         )
-        self.execution.halt(self.account["id"], "operator requested stop")
+        self.execution.halt(self.account["id"], "operator requested stop", principal=self.principal)
         self.assertTrue(self.execution.circuit_breaker_status(self.account["id"])["halted"])
         self.assertFalse(self.execution.circuit_breaker_status(second["id"])["halted"])
         trade = self.open_position(account_id=second["id"])
@@ -196,7 +199,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             entry_fee="0", estimated_exit_fee="0",
         )
         self.provider.price = Decimal("70")
-        self.execution.close_position(prior["id"], account_id=self.account["id"])
+        self.execution.close_position(prior["id"], account_id=self.account["id"], principal=self.principal)
         self.assertEqual(self.accounts.calculate_equity(self.account["id"]), Decimal("9700"))
         self.provider.price = Decimal("100")
         with self.assertRaises(RiskRejectedError) as raised:
@@ -208,7 +211,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         trade = self.open_position()
         self.provider.price = Decimal("110")
         closed = self.execution.close_position(
-            trade["id"], account_id=self.account["id"], exit_fee="0.1"
+            trade["id"], account_id=self.account["id"], exit_fee="0.1", principal=self.principal
         )
         self.assertEqual(Decimal(closed["realized_pnl"]), Decimal("9.8"))
         events = self.connection.execute(
@@ -244,7 +247,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         """)
         self.provider.price = Decimal("110")
         with self.assertRaises(sqlite3.IntegrityError):
-            self.execution.close_position(trade["id"], account_id=self.account["id"])
+            self.execution.close_position(trade["id"], account_id=self.account["id"], principal=self.principal)
         stored = self.execution._ledger.get_trade(trade["id"])
         self.assertEqual(stored["status"], "OPEN")
         self.assertEqual(
@@ -470,7 +473,7 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.assertEqual(raised.exception.reason, "circuit_breaker_halted")
 
         reset = self.execution.reset_circuit_breaker(
-            self.account["id"], confirmed_by="paper-test-operator",
+            self.account["id"], principal=self.principal,
         )
         self.assertFalse(reset["halted"])
         metrics = self.execution._repository.risk_metrics(
