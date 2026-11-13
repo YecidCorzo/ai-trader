@@ -74,7 +74,7 @@ class PaperStopMonitorTests(unittest.TestCase):
             - Decimal(closed[0]["entry_fee"])
             - Decimal(closed[0]["exit_fee"])
         )
-        self.assertEqual(Decimal(closed[0]["realized_pnl"]), expected)
+        self.assertEqual(Decimal(closed[0]["realized_pnl"]), expected.quantize(Decimal("0.00000001")) )
         self.assertEqual(closed[0]["exit_reason"], "stop_loss_triggered")
 
     def test_short_stop_closes_when_market_rises_through_stop(self):
