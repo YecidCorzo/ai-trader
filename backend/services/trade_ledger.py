@@ -74,8 +74,8 @@ class TradeLedger:
             self._repository.create_trade({
                 "id": trade_id, "event_id": str(uuid4()),
                 "symbol": symbol, "strategy": strategy, "side": side,
-                "quantity": str(qty), "entry_price": str(price),
-                "entry_fee": str(fee), "opened_at": timestamp,
+                "quantity": format(qty, "f"), "entry_price": format(price, "f"),
+                "entry_fee": format(fee, "f"), "opened_at": timestamp,
                 "metadata_json": json.dumps(metadata or {}, sort_keys=True),
                 "event_details_json": json.dumps(event_details, sort_keys=True),
                 "paper_account_id": paper_account_id,
@@ -116,8 +116,8 @@ class TradeLedger:
         }
         try:
             updated = self._repository.close_trade(
-                trade_id=trade_id, exit_price=str(price), exit_fee=str(fee),
-                realized_pnl=str(realized), closed_at=timestamp,
+                trade_id=trade_id, exit_price=format(price, "f"), exit_fee=format(fee, "f"),
+                realized_pnl=format(realized, "f"), closed_at=timestamp,
                 exit_reason=exit_reason, event_id=str(uuid4()),
                 event_details_json=json.dumps(details, sort_keys=True),
             )
@@ -134,7 +134,7 @@ class TradeLedger:
                               ?, ?, ?
                        FROM paper_accounts AS account WHERE account.id = ?""",
                     (
-                        str(uuid4()), str(realized), f"trade-close:{trade_id}",
+                        str(uuid4()), format(realized, "f"), f"trade-close:{trade_id}",
                         trade_id, timestamp, trade["paper_account_id"],
                     ),
                 )
