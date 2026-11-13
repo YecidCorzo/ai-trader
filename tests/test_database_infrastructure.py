@@ -20,6 +20,7 @@ class DatabaseConnectionTests(unittest.TestCase):
             connection = connect_database(path)
             try:
                 self.assertTrue(path.parent.exists())
+                self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
                 self.assertIsInstance(connection, sqlite3.Connection)
                 self.assertIsNotNone(connection.execute("PRAGMA foreign_keys").fetchone())
                 self.assertEqual(
@@ -181,7 +182,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 )
                 connection.commit()
 
-                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005", "0006", "0007"])
+                self.assertEqual(apply_migrations(connection, migrations_dir), ["0005", "0006", "0007", "0008"])
                 legacy_trade = connection.execute(
                     "SELECT paper_account_id FROM paper_trades WHERE id = 'legacy-trade-1'"
                 ).fetchone()
