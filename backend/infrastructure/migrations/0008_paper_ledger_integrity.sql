@@ -291,6 +291,9 @@ WHEN
  OR (NEW.exit_price IS NOT NULL AND instr(NEW.exit_price, '.') > 0 AND length(NEW.exit_price) - instr(NEW.exit_price, '.') > 8)
  OR (NEW.exit_fee IS NOT NULL AND instr(NEW.exit_fee, '.') > 0 AND length(NEW.exit_fee) - instr(NEW.exit_fee, '.') > 8)
  OR (NEW.realized_pnl IS NOT NULL AND instr(NEW.realized_pnl, '.') > 0 AND length(NEW.realized_pnl) - instr(NEW.realized_pnl, '.') > 8)
+ OR (NEW.exit_price IS NOT NULL AND length(CASE WHEN instr(NEW.exit_price, '.') > 0 THEN substr(NEW.exit_price,1,instr(NEW.exit_price,'.')-1) ELSE NEW.exit_price END)>1 AND substr(NEW.exit_price,1,1)='0')
+ OR (NEW.exit_fee IS NOT NULL AND length(CASE WHEN instr(NEW.exit_fee, '.') > 0 THEN substr(NEW.exit_fee,1,instr(NEW.exit_fee,'.')-1) ELSE NEW.exit_fee END)>1 AND substr(NEW.exit_fee,1,1)='0')
+ OR (NEW.realized_pnl IS NOT NULL AND length(CASE WHEN instr(ltrim(NEW.realized_pnl, '-'), '.') > 0 THEN substr(ltrim(NEW.realized_pnl, '-'),1,instr(ltrim(NEW.realized_pnl, '-'),'.')-1) ELSE ltrim(NEW.realized_pnl, '-') END)>1 AND substr(ltrim(NEW.realized_pnl, '-'),1,1)='0')
 BEGIN
     SELECT RAISE(ABORT, 'PAPER trade financial values exceed 8 decimals');
 END;
