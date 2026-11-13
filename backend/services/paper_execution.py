@@ -1,6 +1,7 @@
 """Pre-trade gate for simulated entries; no live order-routing capability."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -183,6 +184,7 @@ class PaperExecutionService:
                 "paper_account_id": account_id,
                 "stop_price": str(stop),
                 "planned_loss": str(planned_loss),
+                "estimated_exit_fee": str(exit_fee),
                 "risk_ratio": str(decision.risk_ratio),
                 "equity_source": "persisted_paper_account",
             })
@@ -216,7 +218,16 @@ class PaperExecutionService:
         )
         if quote is None:
             raise ValueError("No hay un precio de mercado actual para cerrar la operación")
+        return self._close_position_with_quote(
+            trade_id, account_id=account_id, quote=quote,
+            exit_fee=closing_fee, exit_reason=exit_reason,
+        )
 
+    def _close_position_with_quote(
+        self, trade_id: str, *, account_id: str, quote,
+        exit_fee: Decimal, exit_reason: str | None,
+    ) -> dict:
+        """Close at an observed public-market quote; never substitute the stop price."""
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             current = self._ledger.get_trade(trade_id)
@@ -224,16 +235,80 @@ class PaperExecutionService:
                 raise ValueError("La operación ya está cerrada o no existe")
             if current["paper_account_id"] != account_id:
                 raise ValueError("La operación no pertenece a la cuenta PAPER indicada")
+            if current["symbol"] != quote.symbol:
+                raise ValueError("La cotización no corresponde al símbolo de la operación")
             now = datetime.now(timezone.utc)
-            self._accounts.persist_price_quotes(quotes, now=now)
+            self._accounts.persist_price_quotes([quote], now=now)
             return self._ledger.close_trade(
                 trade_id, exit_price=quote.price,
-                exit_fee=closing_fee, exit_reason=exit_reason,
+                exit_fee=exit_fee, exit_reason=exit_reason,
             )
         except Exception:
             self._connection.rollback()
             raise
 
+    def process_stop_losses(self, account_id: str) -> list[dict]:
+        """Close PAPER positions whose stop was crossed at a fresh observed quote.
+
+        A stop is triggered at the next successful polling observation. The
+        simulated fill uses that observed market price, not the configured stop
+        price, so gaps can produce losses larger than planned risk.
+        """
+        if not account_id or not account_id.strip():
+            raise ValueError("account_id es obligatorio")
+        self._accounts.get_account(account_id)
+        rows = self._connection.execute(
+            """SELECT * FROM paper_trades
+               WHERE paper_account_id = ? AND status = 'OPEN'
+               ORDER BY opened_at, id""",
+            (account_id,),
+        ).fetchall()
+        if not rows:
+            return []
+
+        quotes = self._accounts.fetch_open_position_quotes(account_id)
+        quote_by_symbol = {quote.symbol: quote for quote in quotes}
+        closed = []
+        for trade in rows:
+            try:
+                metadata = json.loads(trade["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError) as error:
+                raise ValueError(
+                    f"La operación {trade['id']} tiene metadatos inválidos"
+                ) from error
+            if not isinstance(metadata, dict) or "stop_price" not in metadata:
+                raise ValueError(
+                    f"La operación {trade['id']} no tiene un stop verificable"
+                )
+            stop = _positive_decimal(metadata["stop_price"], "stop_price")
+            quote = quote_by_symbol.get(trade["symbol"])
+            if quote is None:
+                raise ValueError(
+                    f"No hay una cotización actual para {trade['symbol']}"
+                )
+            market_price = _positive_decimal(quote.price, "market_price")
+            triggered = (
+                market_price <= stop if trade["side"] == "LONG"
+                else market_price >= stop
+            )
+            if not triggered:
+                continue
+            estimated_fee = _non_negative_decimal(
+                metadata.get("estimated_exit_fee", "0"),
+                "estimated_exit_fee",
+            )
+            try:
+                result = self._close_position_with_quote(
+                    trade["id"], account_id=account_id, quote=quote,
+                    exit_fee=estimated_fee, exit_reason="stop_loss_triggered",
+                )
+            except ValueError as error:
+                # Another worker may have closed this position after the scan.
+                if "ya está cerrada" in str(error):
+                    continue
+                raise
+            closed.append(result)
+        return closed
     def circuit_breaker_status(self, account_id: str) -> dict:
         return CircuitBreaker(self._connection, account_id).status()
 

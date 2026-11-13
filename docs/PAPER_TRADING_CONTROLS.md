@@ -154,6 +154,40 @@ must exactly match the PAPER account currency. Binance remains the final
 authority on whether the complete pair is listed. No implicit FX conversion
 or ambiguous suffix matching is performed.
 
+## Automatic PAPER stop-loss monitoring
+
+The stop level is monitored by a separate polling worker. Start it alongside the
+API, using the same database path:
+
+```bash
+python -m backend.services.paper_stop_worker
+```
+
+The worker scans all funded PAPER accounts with open positions, retrieves
+fresh public Binance ticker prices, and closes positions when the observed
+price is at or beyond the configured stop:
+- LONG: observed price is less than or equal to the stop.
+- SHORT: observed price is greater than or equal to the stop.
+
+The simulated exit fill uses the observed market quote, not the configured
+stop price. The estimated exit fee supplied at entry is applied to the
+simulated close. The worker defaults to a one-second polling interval; set
+`AI_TRADER_STOP_POLL_SECONDS` to change it. It uses the same
+`AI_TRADER_DB_PATH` environment variable as the API and applies pending
+migrations at startup.
+
+**Important limitations:** this is polling-based PAPER simulation, not an
+exchange-hosted stop order. A price can gap beyond the stop between polls, so
+the fill can be worse than the stop and planned loss. If the worker is stopped,
+the database is unavailable, or market data is stale/unavailable, no automatic
+stop execution occurs during that period. Keep the worker running under a
+process supervisor for continuous monitoring. This does not guarantee a
+maximum loss and must never be described as real-money stop protection.
+
+The worker is intentionally separate from FastAPI request handling. It does
+not add public account or execution routes, use exchange credentials, or
+submit live orders.
+
 ## Current security boundary
 
 - The dashboard reports no balance/equity and an unconfigured account until
