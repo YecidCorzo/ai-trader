@@ -42,6 +42,7 @@ class AdvancedStrategy:
                 "stop_loss": None,
                 "take_profit_1": None,
                 "take_profit_2": None,
+                "invalidation": None,
                 "risk_reward": self.risk_reward,
                 "reasons": ["ATR no válido: riesgo no calculable"],
                 "mode": "paper"
@@ -137,6 +138,14 @@ class AdvancedStrategy:
             tp1 = None
             tp2 = None
 
+        invalidation = None
+        if stop_loss is not None:
+            invalidation = {
+                "price": round(stop_loss, 6),
+                "trigger": "at_or_below" if signal == "LONG" else "at_or_above",
+                "basis": "atr_stop",
+            }
+
         if not vwap_available:
             reasons.append("VWAP no disponible: volumen total cero o dato ausente")
 
@@ -148,6 +157,7 @@ class AdvancedStrategy:
             "stop_loss": round(stop_loss, 6) if stop_loss is not None else None,
             "take_profit_1": round(tp1, 6) if tp1 is not None else None,
             "take_profit_2": round(tp2, 6) if tp2 is not None else None,
+            "invalidation": invalidation,
             "risk_reward": self.risk_reward,
             "long_score": long_score,
             "short_score": short_score,
