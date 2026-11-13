@@ -341,3 +341,127 @@ def run_walk_forward_backtests(
             "walk-forward results do not authorize live trading",
         ],
     }
+
+
+def run_advanced_strategy_walk_forward_backtests(
+    raw_candles,
+    train_size,
+    validation_size,
+    test_size,
+    step_size=None,
+    backtest_kwargs=None,
+):
+    """Run AdvancedStrategy on untouched chronological test windows.
+
+    Each fold uses all candles before its test window only as indicator warm-up.
+    The final pre-test candle may generate a signal; the first simulated entry
+    is at the first test candle's open. Each fold starts with fresh virtual
+    capital and fixed strategy parameters.
+    """
+    from .advanced_strategy_backtest import AdvancedStrategyBacktestService
+
+    candles = list(raw_candles)
+    if step_size is None:
+        step_size = test_size
+    splits = chronological_walk_forward_splits(
+        candles, train_size, validation_size, test_size, step_size
+    )
+    kwargs = dict(backtest_kwargs or {})
+    initial_balance = _finite_number(
+        kwargs.get("initial_balance", 10000.0), "initial_balance"
+    )
+    if initial_balance <= 0:
+        raise ValueError("initial_balance debe ser positivo")
+
+    folds = []
+    all_trades = []
+    for fold_number, split in enumerate(splits, start=1):
+        test_start, test_end = split["test_range"]
+        signal_start = test_start - 1
+        if signal_start < 50:
+            raise ValueError(
+                "train_size + validation_size debe dejar al menos 50 velas "
+                "de calentamiento antes del primer test"
+            )
+        engine = AdvancedStrategyBacktestService(**kwargs)
+        result = engine.run(
+            candles,
+            start_index=signal_start,
+            end_index=test_end - 1,
+        )
+        fold_trades = result.get("trades", [])
+        all_trades.extend(fold_trades)
+        folds.append({
+            "fold": fold_number,
+            "train_range": split["train_range"],
+            "validation_range": split["validation_range"],
+            "test_range": split["test_range"],
+            "test_candles": test_size,
+            "trade_count": result["total_trades"],
+            "net_pnl": result["net_profit"],
+            "expectancy_per_trade": result["expectancy_per_trade"],
+            "return_percent": result["return_percent"],
+            "win_rate_percent": result["win_rate_percent"],
+            "profit_factor": result["profit_factor"],
+            "max_drawdown_percent": result["max_drawdown_percent"],
+            "fees": result["total_fees"],
+        })
+
+    trade_count = len(all_trades)
+    winners = [trade for trade in all_trades if trade["net_pnl"] > 0]
+    losers = [trade for trade in all_trades if trade["net_pnl"] < 0]
+    gross_profit = sum(trade["net_pnl"] for trade in winners)
+    gross_loss = abs(sum(trade["net_pnl"] for trade in losers))
+    total_net_pnl = sum(trade["net_pnl"] for trade in all_trades)
+    total_fees = sum(fold["fees"] for fold in folds)
+    average_return = (
+        total_net_pnl / (initial_balance * len(folds)) * 100 if folds else 0.0
+    )
+    benchmark_returns = []
+    for fold in folds:
+        start, end = fold["test_range"]
+        benchmark = buy_and_hold_baseline(
+            candles[start:end],
+            initial_balance,
+            fee_rate=kwargs.get("fee_rate", 0.001),
+            slippage_rate=kwargs.get("slippage_rate", 0.0005),
+        )
+        benchmark_returns.append(benchmark["return_percent"])
+    average_benchmark_return = (
+        sum(benchmark_returns) / len(benchmark_returns) if benchmark_returns else 0.0
+    )
+    return {
+        "framework": "fixed_parameter_advanced_strategy_chronological_walk_forward",
+        "strategy": "AdvancedStrategy",
+        "mode": "paper",
+        "parameter_optimization_performed": False,
+        "fold_count": len(folds),
+        "initial_balance_per_fold": round(initial_balance, 6),
+        "aggregation": "sum_of_independent_fold_pnl; not compounded",
+        "total_trades": trade_count,
+        "net_pnl": round(total_net_pnl, 6),
+        "expectancy_per_trade": round(total_net_pnl / trade_count, 6)
+        if trade_count else None,
+        "win_rate_percent": round(len(winners) / trade_count * 100, 4)
+        if trade_count else 0.0,
+        "profit_factor": round(gross_profit / gross_loss, 6)
+        if gross_loss > 0 else None,
+        "max_fold_drawdown_percent": round(
+            max((fold["max_drawdown_percent"] for fold in folds), default=0.0), 6
+        ),
+        "total_fees": round(total_fees, 6),
+        "average_test_return_percent": round(average_return, 6),
+        "average_buy_and_hold_return_percent": round(average_benchmark_return, 6),
+        "excess_return_vs_buy_and_hold_percent": round(
+            average_return - average_benchmark_return, 6
+        ),
+        "folds": folds,
+        "trades": all_trades,
+        "limitations": [
+            "AdvancedStrategy parameters remain fixed; no train/validation optimization is performed",
+            "each fold starts with independent virtual capital; aggregate return is not compounded",
+            "the last pre-test candle supplies the signal and the first test candle supplies the entry open",
+            "OHLC execution and intrabar ordering remain simplified PAPER assumptions",
+            "walk-forward results do not authorize live trading",
+        ],
+    }
