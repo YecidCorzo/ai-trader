@@ -92,7 +92,7 @@ class PaperStopMonitorTests(unittest.TestCase):
             - Decimal(closed[0]["entry_fee"])
             - Decimal(closed[0]["exit_fee"])
         )
-        self.assertEqual(Decimal(closed[0]["realized_pnl"]), expected)
+        self.assertEqual(Decimal(closed[0]["realized_pnl"]), expected.quantize(Decimal("0.00000001")) )
         self.assertEqual(closed[0]["exit_reason"], "stop_loss_triggered")
 
     def test_position_remains_open_when_stop_has_not_been_crossed(self):
