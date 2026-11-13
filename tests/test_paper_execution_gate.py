@@ -400,5 +400,29 @@ class PaperExecutionGateTests(unittest.TestCase):
                 verify.close()
 
 
+    def test_entry_notional_and_fee_cannot_exceed_free_cash(self):
+        self.execution = PaperExecutionService(
+            self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
+            account_service=self.accounts,
+        )
+        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position(quantity="10", stop_price="95", entry_fee="1", estimated_exit_fee="0")
+        self.assertEqual(raised.exception.reason, "insufficient_free_cash")
+        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
+
+    def test_total_open_commitment_cannot_exceed_current_equity(self):
+        self.execution = PaperExecutionService(
+            self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
+            account_service=self.accounts,
+        )
+        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        self.provider.price = Decimal("99")
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position(quantity="9.5", stop_price="98.99", entry_fee="0", estimated_exit_fee="0")
+        self.assertEqual(raised.exception.reason, "committed_capital_exceeds_equity")
+        self.assertEqual(self.accounts.get_equity(self.account["id"]), Decimal("9910"))
+        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
+
 if __name__ == "__main__":
     unittest.main()
