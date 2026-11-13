@@ -248,7 +248,12 @@ class PaperExecutionService:
     def close_position(
         self, trade_id: str, *, account_id: str,
         exit_fee: Decimal | str = "0", exit_reason: str | None = None,
+        principal: VerifiedPrincipal,
     ) -> dict:
+        if not isinstance(principal, VerifiedPrincipal):
+            raise ValueError("Se requiere un principal verificado para cerrar PAPER")
+        self._authorization.require_trade(principal, account_id, trade_id)
+        actor = {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
         trade = self._ledger.get_trade(trade_id)
         if trade is None:
             raise ValueError("Operación no encontrada")
@@ -266,12 +271,13 @@ class PaperExecutionService:
             raise ValueError("No hay un precio de mercado actual para cerrar la operación")
         return self._close_position_with_quote(
             trade_id, account_id=account_id, quote=quote,
-            exit_fee=closing_fee, exit_reason=exit_reason,
+            exit_fee=closing_fee, exit_reason=exit_reason, actor=actor,
         )
 
     def _close_position_with_quote(
         self, trade_id: str, *, account_id: str, quote,
         exit_fee: Decimal, exit_reason: str | None,
+        actor: dict | None = None,
     ) -> dict:
         """Close at an observed public-market quote; never substitute the stop price."""
         try:
@@ -287,7 +293,7 @@ class PaperExecutionService:
             self._accounts.persist_price_quotes([quote], now=now)
             closed = self._ledger.close_trade(
                 trade_id, exit_price=quote.price,
-                exit_fee=exit_fee, exit_reason=exit_reason,
+                exit_fee=exit_fee, exit_reason=exit_reason, actor=actor,
             )
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
@@ -361,6 +367,7 @@ class PaperExecutionService:
                 result = self._close_position_with_quote(
                     trade["id"], account_id=account_id, quote=quote,
                     exit_fee=estimated_fee, exit_reason="stop_loss_triggered",
+                    actor={"type": "system", "name": "paper_stop_worker"},
                 )
             except ValueError as error:
                 # Another worker may have closed this position after the scan.
