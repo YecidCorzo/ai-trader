@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from uuid import uuid4
 
 try:
@@ -20,7 +20,17 @@ def _decimal(value: Decimal | str | int, field: str, *, allow_zero: bool = False
         raise ValueError(f"{field} debe ser un decimal válido") from None
     if not result.is_finite() or result < 0 or (not allow_zero and result == 0):
         raise ValueError(f"{field} debe ser {'no negativo' if allow_zero else 'positivo'} y finito")
+    if max(0, -result.as_tuple().exponent) > 8:
+        raise ValueError(f"{field} supera 8 decimales")
     return result
+
+
+MONEY_QUANTUM = Decimal("0.00000001")
+
+
+def _money_decimal(value: Decimal | str | int, field: str, *, allow_zero: bool = True) -> Decimal:
+    amount = _decimal(value, field, allow_zero=allow_zero)
+    return amount.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_EVEN)
 
 
 def _utc_timestamp(value: datetime | None) -> str:
@@ -51,21 +61,21 @@ class TradeLedger:
         if side not in {"LONG", "SHORT"}:
             raise ValueError("side debe ser LONG o SHORT")
         qty = _decimal(quantity, "quantity")
-        price = _decimal(entry_price, "entry_price")
-        fee = _decimal(entry_fee, "entry_fee", allow_zero=True)
+        price = _money_decimal(entry_price, "entry_price", allow_zero=False)
+        fee = _money_decimal(entry_fee, "entry_fee")
         timestamp = _utc_timestamp(opened_at)
         trade_id = str(uuid4())
         event_details = {
             "mode": "paper", "symbol": symbol, "side": side,
-            "quantity": str(qty), "entry_price": str(price),
-            "entry_fee": str(fee), "paper_account_id": paper_account_id,
+            "quantity": format(qty, "f"), "entry_price": format(price, "f"),
+            "entry_fee": format(fee, "f"), "paper_account_id": paper_account_id,
         }
         try:
             self._repository.create_trade({
                 "id": trade_id, "event_id": str(uuid4()),
                 "symbol": symbol, "strategy": strategy, "side": side,
-                "quantity": str(qty), "entry_price": str(price),
-                "entry_fee": str(fee), "opened_at": timestamp,
+                "quantity": format(qty, "f"), "entry_price": format(price, "f"),
+                "entry_fee": format(fee, "f"), "opened_at": timestamp,
                 "metadata_json": json.dumps(metadata or {}, sort_keys=True),
                 "event_details_json": json.dumps(event_details, sort_keys=True),
                 "paper_account_id": paper_account_id,
@@ -87,8 +97,8 @@ class TradeLedger:
         if trade["status"] != "OPEN":
             raise ValueError("La operación ya está cerrada")
 
-        price = _decimal(exit_price, "exit_price")
-        fee = _decimal(exit_fee, "exit_fee", allow_zero=True)
+        price = _money_decimal(exit_price, "exit_price", allow_zero=False)
+        fee = _money_decimal(exit_fee, "exit_fee")
         quantity = Decimal(trade["quantity"])
         entry = Decimal(trade["entry_price"])
         entry_fee = Decimal(trade["entry_fee"])
@@ -97,17 +107,17 @@ class TradeLedger:
             if trade["side"] == "LONG"
             else quantity * (entry - price)
         )
-        realized = gross_pnl - entry_fee - fee
+        realized = (gross_pnl - entry_fee - fee).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_EVEN)
         timestamp = _utc_timestamp(closed_at)
         details = {
             "mode": "paper", "exit_price": str(price),
             "exit_fee": str(fee), "gross_pnl": str(gross_pnl),
-            "realized_pnl": str(realized), "exit_reason": exit_reason,
+            "realized_pnl": format(realized, "f"), "exit_reason": exit_reason,
         }
         try:
             updated = self._repository.close_trade(
-                trade_id=trade_id, exit_price=str(price), exit_fee=str(fee),
-                realized_pnl=str(realized), closed_at=timestamp,
+                trade_id=trade_id, exit_price=format(price, "f"), exit_fee=format(fee, "f"),
+                realized_pnl=format(realized, "f"), closed_at=timestamp,
                 exit_reason=exit_reason, event_id=str(uuid4()),
                 event_details_json=json.dumps(details, sort_keys=True),
             )
@@ -124,7 +134,7 @@ class TradeLedger:
                               ?, ?, ?
                        FROM paper_accounts AS account WHERE account.id = ?""",
                     (
-                        str(uuid4()), str(realized), f"trade-close:{trade_id}",
+                        str(uuid4()), format(realized, "f"), f"trade-close:{trade_id}",
                         trade_id, timestamp, trade["paper_account_id"],
                     ),
                 )
