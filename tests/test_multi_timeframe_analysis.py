@@ -5,7 +5,7 @@ from backend.services.multi_timeframe_analysis import MultiTimeframeAnalysisServ
 
 class FakeMarketService:
     def __init__(self, closes=None, short_history=None):
-        self.closes = closes or {"5m": 100.0, "15m": 100.0, "1h": 100.0}
+        self.closes = closes or {"1h": 100.0, "4h": 100.0}
         self.short_history = set(short_history or ())
         self.calls = []
 
@@ -14,11 +14,12 @@ class FakeMarketService:
         count = 51 if interval in self.short_history else 60
         close = self.closes[interval]
         base_time_ms = 1767312000000
+        interval_ms = {"1h": 3_600_000, "4h": 14_400_000}[interval]
         rows = []
         for index in range(count):
             price = close + index * 0.001
             rows.append([
-                base_time_ms + index * 300000,
+                base_time_ms + index * interval_ms,
                 price - 0.05,
                 price + 0.2,
                 price - 0.2,
@@ -59,7 +60,7 @@ class MultiTimeframeAnalysisTests(unittest.TestCase):
         market = FakeMarketService()
         result = self.service(market).run()
         self.assertEqual(result["consensus"], "LONG")
-        self.assertEqual(set(result["timeframes"]), {"5m", "15m", "1h"})
+        self.assertEqual(set(result["timeframes"]), {"1h", "4h"})
         for interval, analysis in result["timeframes"].items():
             self.assertTrue(analysis["available"])
             self.assertEqual(analysis["signal"], "LONG")
@@ -69,9 +70,9 @@ class MultiTimeframeAnalysisTests(unittest.TestCase):
         self.assertFalse(result["live_trading_authorized"])
 
     def test_mixed_timeframe_directions_return_neutral_consensus(self):
-        market = FakeMarketService(closes={"5m": 100.0, "15m": 90.0, "1h": 100.0})
+        market = FakeMarketService(closes={"1h": 100.0, "4h": 90.0})
         result = self.service(market).run()
-        self.assertEqual(result["timeframes"]["15m"]["signal"], "SHORT")
+        self.assertEqual(result["timeframes"]["4h"]["signal"], "SHORT")
         self.assertEqual(result["consensus"], "NEUTRAL")
         self.assertIn("no confirman", result["reason"])
 
@@ -83,7 +84,7 @@ class MultiTimeframeAnalysisTests(unittest.TestCase):
 
     def test_at_least_two_distinct_timeframes_are_required(self):
         with self.assertRaisesRegex(ValueError, "al menos dos"):
-            self.service(FakeMarketService()).run(intervals=["5m"])
+            self.service(FakeMarketService()).run(intervals=["1h"])
 
 
 if __name__ == "__main__":
