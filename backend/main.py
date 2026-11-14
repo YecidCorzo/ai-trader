@@ -4,8 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import logging
 import os
+import sys
 
-from services.market_services import MarketService
+from services.market_services import MarketService, MarketDataError
 from services.signal_validation import validate_signal_history
 from indicators.ema import calculate_ema, calculate_ema_series
 from indicators.rsi import calculate_rsi
@@ -31,7 +32,18 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _market_data_http_error(error):
+    logger.warning("Market-data upstream failure: %s", type(error).__name__)
+    return HTTPException(
+        status_code=error.status_code,
+        detail="Proveedor de datos de mercado no disponible",
+    )
+
+
 def _internal_server_error(operation):
+    error = sys.exc_info()[1]
+    if isinstance(error, MarketDataError):
+        return _market_data_http_error(error)
     logger.exception("Unexpected error while executing %s", operation)
     return HTTPException(status_code=500, detail="Error interno del servidor")
 
@@ -83,7 +95,10 @@ def dashboard():
 
 @app.get("/api/price")
 def get_price():
-    price = market_service.get_price()
+    try:
+        price = market_service.get_price()
+    except MarketDataError as error:
+        raise _market_data_http_error(error) from None
 
     return {
         "symbol": "SOL/USDT",
@@ -94,10 +109,13 @@ def get_price():
 
 @app.get("/api/candles")
 def get_candles():
-    rows = market_service.get_candles(
-        interval="5m",
-        limit=100
-    )
+    try:
+        rows = market_service.get_candles(
+            interval="5m",
+            limit=100
+        )
+    except MarketDataError as error:
+        raise _market_data_http_error(error) from None
 
     return {
         "symbol": "SOL/USDT",
@@ -116,11 +134,14 @@ def get_candles():
     }
 @app.get("/api/signal")
 def get_signal():
-    rows = market_service.get_candles(
-        interval="5m",
-        limit=5000,
-        closed_only=True,
-    )
+    try:
+        rows = market_service.get_candles(
+            interval="5m",
+            limit=5000,
+            closed_only=True,
+        )
+    except MarketDataError as error:
+        raise _market_data_http_error(error) from None
 
     closes = [float(row[4]) for row in rows]
 
