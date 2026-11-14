@@ -302,6 +302,24 @@ class PaperExecutionGateTests(unittest.TestCase):
                 idempotency_key="too-large",
             )
 
+    def test_withdrawal_and_negative_adjustment_preserve_open_position_commitment(self):
+        self.open_position(quantity="90")
+        # 90 SOL at 100 USDT plus the 0.1 entry fee leaves 999.9 free.
+        with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
+            self.accounts.record_funding(
+                self.account["id"], event_type="WITHDRAWAL", amount="1000",
+                idempotency_key="withdraw-committed",
+            )
+        with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
+            self.accounts.record_funding(
+                self.account["id"], event_type="ADJUSTMENT", amount="-1000",
+                idempotency_key="adjust-committed",
+            )
+        self.assertEqual(
+            self.accounts.calculate_free_cash(self.account["id"]),
+            Decimal("999.9"),
+        )
+
     def test_stale_or_unavailable_price_fails_closed_for_open_positions(self):
         self.open_position()
         stale_accounts = PaperAccountService(
