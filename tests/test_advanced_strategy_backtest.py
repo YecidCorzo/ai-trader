@@ -35,9 +35,14 @@ def candles_fixture(side="LONG"):
         }
         if index == 51:
             if side == "LONG":
-                candle.update({"high": 111.0})
+                candle.update({"high": 106.0, "low": 100.0})
             else:
-                candle.update({"low": 89.0})
+                candle.update({"high": 100.0, "low": 94.0})
+        if index == 52:
+            if side == "LONG":
+                candle.update({"open": 101.0, "high": 111.0, "low": 101.0, "close": 101.0})
+            else:
+                candle.update({"open": 99.8, "high": 99.9, "low": 89.0, "close": 99.8})
         rows.append(candle)
     return rows
 
@@ -81,11 +86,27 @@ class AdvancedStrategyBacktestTests(unittest.TestCase):
         trade = result["trades"][0]
         self.assertEqual(trade["signal_time"], 50)
         self.assertEqual(trade["entry_time"], 51)
-        self.assertEqual(trade["exit_time"], 51)
-        self.assertEqual(trade["exit_reason"], "take_profit")
+        self.assertEqual(trade["exit_time"], 52)
+        self.assertEqual(trade["exit_reason"], "take_profit_2")
+        self.assertTrue(trade["tp1_hit"])
+        self.assertAlmostEqual(trade["tp1_partial_quantity"], trade["quantity"] * 0.5, places=7)
+        self.assertAlmostEqual(trade["remaining_quantity"], trade["quantity"] * 0.5, places=7)
+        self.assertAlmostEqual(trade["stop_after_tp1"], trade["entry"], places=8)
+        self.assertAlmostEqual(
+            trade["take_profit_1"] - trade["entry"],
+            trade["entry"] - trade["stop_loss"],
+            places=8,
+        )
         self.assertGreater(trade["entry"], 100.0)
-        self.assertLess(trade["exit"], 110.0)
+        self.assertLess(trade["exit"], trade["take_profit_2"])
         self.assertLessEqual(trade["net_pnl"], trade["gross_pnl"])
+        self.assertGreater(trade["tp1_exit_fee"], 0)
+        self.assertGreater(trade["tp1_partial_quantity"], 0)
+        self.assertAlmostEqual(
+            result["total_fees"],
+            trade["entry_fee"] + trade["exit_fee"],
+            places=7,
+        )
         self.assertLessEqual(trade["quantity"] * (
             abs(trade["entry"] - trade["stop_loss"] * (1 - service.slippage_rate))
             + trade["entry"] * service.fee_rate
@@ -100,10 +121,41 @@ class AdvancedStrategyBacktestTests(unittest.TestCase):
         self.assertEqual(trade["direction"], "SHORT")
         self.assertEqual(trade["signal_time"], 50)
         self.assertEqual(trade["entry_time"], 51)
+        self.assertEqual(trade["exit_time"], 52)
+        self.assertTrue(trade["tp1_hit"])
         self.assertGreater(trade["entry"], 0)
         self.assertLess(trade["entry"], 100.0)
-        self.assertGreater(trade["exit"], 90.0)
-        self.assertEqual(trade["exit_reason"], "take_profit")
+        self.assertGreater(trade["exit"], trade["take_profit_2"])
+        self.assertEqual(trade["exit_reason"], "take_profit_2")
+
+    def test_long_moves_remaining_stop_to_break_even_after_tp1(self):
+        rows = candles_fixture("LONG")
+        rows[52].update({"open": 100.0, "high": 103.0, "low": 99.0})
+        result = AdvancedStrategyBacktestService(strategy=StubAdvancedStrategy("LONG")).run(rows)
+        trade = result["trades"][0]
+        self.assertTrue(trade["tp1_hit"])
+        self.assertEqual(trade["exit_reason"], "breakeven_stop")
+        self.assertAlmostEqual(trade["stop_after_tp1"], trade["entry"], places=8)
+        self.assertLess(trade["exit"], trade["entry"])
+
+    def test_short_moves_remaining_stop_to_break_even_after_tp1(self):
+        rows = candles_fixture("SHORT")
+        rows[52].update({"open": 100.0, "high": 100.1, "low": 97.0})
+        result = AdvancedStrategyBacktestService(strategy=StubAdvancedStrategy("SHORT")).run(rows)
+        trade = result["trades"][0]
+        self.assertTrue(trade["tp1_hit"])
+        self.assertEqual(trade["exit_reason"], "breakeven_stop")
+        self.assertAlmostEqual(trade["stop_after_tp1"], trade["entry"], places=8)
+        self.assertGreater(trade["exit"], trade["entry"])
+
+    def test_original_stop_wins_if_stop_and_tp1_are_touched_in_same_bar(self):
+        rows = candles_fixture("LONG")
+        rows[51].update({"high": 106.0, "low": 94.0})
+        result = AdvancedStrategyBacktestService(strategy=StubAdvancedStrategy("LONG")).run(rows)
+        trade = result["trades"][0]
+        self.assertFalse(trade["tp1_hit"])
+        self.assertEqual(trade["exit_reason"], "stop_loss")
+        self.assertEqual(trade["tp1_partial_quantity"], 0.0)
 
     def test_insufficient_history_is_rejected(self):
         service = AdvancedStrategyBacktestService()
