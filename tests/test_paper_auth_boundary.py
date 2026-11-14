@@ -217,7 +217,7 @@ class PaperAccountOwnershipTests(unittest.TestCase):
         )
         trade = execution.open_position(
             account_id=self.account_a["id"], symbol="SOLUSDT",
-            strategy="ownership-test", side="LONG", quantity="1",
+            strategy="ownership-test", side="LONG",
             stop_price="95", entry_fee="0", estimated_exit_fee="0",
             principal=self.owner_a, idempotency_key="auth-boundary-open",
         )
