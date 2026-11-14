@@ -191,7 +191,11 @@ migrations at startup.
 
 **Important limitations:** this is polling-based PAPER simulation, not an
 exchange-hosted stop order. A price can gap beyond the stop between polls, so
-the fill can be worse than the stop and planned loss. If the worker is stopped,
+the fill can be worse than the stop and planned loss. The 1% planned-risk limit
+is a sizing target at the configured stop, not a hard cap on realized loss.
+For example, a recorded gap scenario produced a 194 USDT realized loss against
+100 USDT planned risk (1.94× the plan). This is an observed example, not a
+prediction of typical slippage or a maximum bound. If the worker is stopped,
 the database is unavailable, or market data is stale/unavailable, no automatic
 stop execution occurs during that period. Keep the worker running under a
 process supervisor for continuous monitoring. This does not guarantee a
