@@ -303,7 +303,7 @@ class PaperExecutionGateTests(unittest.TestCase):
             )
 
     def test_withdrawal_and_negative_adjustment_preserve_open_position_commitment(self):
-        self.open_position(quantity="90")
+        self.open_position(quantity="90", stop_price="99.99")
         # 90 SOL at 100 USDT plus the 0.1 entry fee leaves 999.9 free.
         with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
             self.accounts.record_funding(
