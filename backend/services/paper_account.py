@@ -200,8 +200,11 @@ class PaperAccountService:
                 self._connection.commit()
                 return dict(existing)
             balance = self._balance(account_id)
-            if signed < 0 and balance + signed < 0:
-                raise PaperAccountError("El movimiento supera el saldo disponible de la cuenta PAPER")
+            # Open positions reserve their notional plus entry fees. Withdrawals
+            # and negative adjustments must not consume that committed capital.
+            free_cash = balance - self.calculate_open_commitment(account_id)
+            if signed < 0 and free_cash + signed < 0:
+                raise PaperAccountError("El movimiento supera el efectivo libre de la cuenta PAPER")
             self._insert_event(
                 account_id=account_id, event_type=event_type, amount=signed,
                 currency=account["quote_currency"], idempotency_key=key,
