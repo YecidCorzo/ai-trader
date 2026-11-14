@@ -4,10 +4,34 @@ These thresholds are fixed before running the acceptance sample. Do not tune
 them after inspecting the same out-of-sample results and then present those
 results as independent confirmation.
 
-Endpoint: `GET /api/backtest/advanced/acceptance`. It runs chronological
-AdvancedStrategy walk-forward folds with the same fee/slippage, risk sizing,
-1R partial TP1, break-even stop and TP2 logic as the AdvancedStrategy
+Endpoint: `GET /api/backtest/advanced/acceptance` runs one immutable sample. It has no
+query overrides: symbol, interval and window sizes are part of the config ID
+returned in every report. It uses the same fee/slippage, risk sizing, 1R
+partial TP1, 1.5R cost-aware stop activation and TP2 logic as the AdvancedStrategy
 backtest. The evaluator fails closed when required metrics are missing.
+
+## Frozen acceptance sample
+
+| Setting | Pre-registered value |
+|---|---:|
+| Config ID | `SOLUSDT-1H-10000-5000-1000-1000-1000-v1` |
+| Symbol | `SOL/USDT` (`SOLUSDT`) |
+| Interval | `1h` |
+| Requested closed candles | 10,000 |
+| Training window | 5,000 candles |
+| Validation window | 1,000 candles |
+| OOS test window | 1,000 candles |
+| Step between OOS folds | 1,000 candles |
+| Minimum history to execute one fold | 7,000 candles |
+| Expected folds with full history | 4 |
+
+The full 10,000-candle sample yields four chronological, non-overlapping
+1,000-candle OOS folds. If fewer than 10,000 candles are returned, the report
+records the actual history and the fold-count/sample gates can only produce
+NO_GO. If fewer than 7,000 closed candles are available, no OOS fold is run and
+the endpoint returns a fail-closed NO_GO report rather than pretending the
+sample was completed. A future symbol, interval or window change requires a
+new config ID and a new untouched acceptance sample.
 
 ## Required aggregate out-of-sample gates
 

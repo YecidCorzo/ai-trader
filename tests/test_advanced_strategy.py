@@ -127,6 +127,37 @@ class AdvancedStrategyInvalidationTests(unittest.TestCase):
         self.assertEqual(high_atr["signal"], "NEUTRAL")
         self.assertFalse(high_atr["regime_filters"]["atr_ok"])
 
+    def test_round_trip_cost_floor_is_derived_from_costs_and_maximum_cost_r(self):
+        strategy = AdvancedStrategy()
+        expected_floor = (2 * (0.001 + 0.0005)) / (0.15 * 1.5)
+        self.assertAlmostEqual(strategy.min_atr_percent, expected_floor, places=12)
+        self.assertAlmostEqual(strategy.derived_min_atr_percent, expected_floor, places=12)
+        self.assertEqual(strategy.max_cost_r, 0.15)
+        self.assertAlmostEqual(strategy.round_trip_cost_rate, 0.003, places=12)
+
+    def test_low_atr_costs_two_r_and_blocks_signal(self):
+        result = AdvancedStrategy().evaluate(
+            candles=AdvancedStrategyCategoryConfirmationTests.candles(),
+            ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=0.1005,
+            ema_trend_slope=0.001,
+        )
+        self.assertEqual(result["signal"], "NEUTRAL")
+        self.assertAlmostEqual(result["regime_filters"]["cost_in_r"], 2.0, places=8)
+        self.assertFalse(result["regime_filters"]["cost_r_ok"])
+        self.assertIn("coste de ida y vuelta supera 0.15R", " ".join(result["reasons"]))
+
+    def test_cost_r_at_or_below_fixed_limit_allows_atr_filter_to_pass(self):
+        result = AdvancedStrategy().evaluate(
+            candles=AdvancedStrategyCategoryConfirmationTests.candles(),
+            ema_fast=101.0, ema_slow=100.0, ema_trend=100.0,
+            rsi=60.0, macd={"histogram": 1.0}, vwap=100.0, atr=1.35,
+            ema_trend_slope=0.001,
+        )
+        self.assertLessEqual(result["regime_filters"]["cost_in_r"], 0.15)
+        self.assertTrue(result["regime_filters"]["cost_r_ok"])
+        self.assertEqual(result["signal"], "LONG")
+
     def test_relative_volume_below_twenty_bar_mean_blocks_signal(self):
         candles = AdvancedStrategyCategoryConfirmationTests.candles()
         candles[-1]["volume"] = 0.1

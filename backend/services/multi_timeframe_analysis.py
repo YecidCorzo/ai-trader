@@ -20,9 +20,9 @@ except ImportError:
 
 
 class MultiTimeframeAnalysisService:
-    """Analyze closed 5m/15m/1h candles and require directional consensus."""
+    """Analyze closed 1h/4h candles and require directional consensus."""
 
-    DEFAULT_INTERVALS = ("5m", "15m", "1h")
+    DEFAULT_INTERVALS = ("1h", "4h")
 
     def __init__(self, market_service, *, strategy_factory=None, limit=500):
         self.market_service = market_service

@@ -13,28 +13,54 @@ class AdvancedStrategy:
         min_score=60,
         atr_stop_multiplier=1.5,
         risk_reward=2.0,
-        min_atr_percent=0.001,
+        min_atr_percent=None,
         max_atr_percent=0.05,
         min_ema_slope_percent=0.0001,
         min_volume_ratio=1.0,
         volume_mean_period=20,
+        fee_rate=0.001,
+        slippage_rate=0.0005,
+        max_cost_r=0.15,
     ):
         self.min_score = min_score
-        self.atr_stop_multiplier = atr_stop_multiplier
-        self.risk_reward = risk_reward
-        self.min_atr_percent = min_atr_percent
-        self.max_atr_percent = max_atr_percent
-        self.min_ema_slope_percent = min_ema_slope_percent
-        self.min_volume_ratio = min_volume_ratio
-        self.volume_mean_period = volume_mean_period
+        self.atr_stop_multiplier = float(atr_stop_multiplier)
+        self.risk_reward = float(risk_reward)
+        self.fee_rate = float(fee_rate)
+        self.slippage_rate = float(slippage_rate)
+        self.max_cost_r = float(max_cost_r)
         numeric_settings = (
-            self.min_atr_percent, self.max_atr_percent,
-            self.min_ema_slope_percent, self.min_volume_ratio,
+            self.atr_stop_multiplier, self.risk_reward, self.fee_rate,
+            self.slippage_rate, self.max_cost_r, float(max_atr_percent),
+            float(min_ema_slope_percent), float(min_volume_ratio),
         )
-        if not all(math.isfinite(float(value)) for value in numeric_settings):
-            raise ValueError("Los filtros de régimen deben ser valores finitos")
+        if min_atr_percent is not None:
+            numeric_settings += (float(min_atr_percent),)
+        if not all(math.isfinite(value) for value in numeric_settings):
+            raise ValueError("Los filtros de régimen y costes deben ser valores finitos")
+        if (
+            self.atr_stop_multiplier <= 0
+            or self.risk_reward <= 0
+            or not 0 <= self.fee_rate < 1
+            or not 0 <= self.slippage_rate < 1
+            or self.max_cost_r <= 0
+        ):
+            raise ValueError("Los parámetros de stop, riesgo y costes deben ser positivos y válidos")
+        self.round_trip_cost_rate = 2 * (self.fee_rate + self.slippage_rate)
+        self.derived_min_atr_percent = (
+            self.round_trip_cost_rate / (self.max_cost_r * self.atr_stop_multiplier)
+        )
+        configured_min_atr = (
+            self.derived_min_atr_percent
+            if min_atr_percent is None
+            else max(float(min_atr_percent), self.derived_min_atr_percent)
+        )
+        self.min_atr_percent = configured_min_atr
+        self.max_atr_percent = float(max_atr_percent)
+        self.min_ema_slope_percent = float(min_ema_slope_percent)
+        self.min_volume_ratio = float(min_volume_ratio)
+        self.volume_mean_period = volume_mean_period
         if self.min_atr_percent < 0 or self.max_atr_percent <= self.min_atr_percent:
-            raise ValueError("La banda ATR% debe ser positiva y creciente")
+            raise ValueError("La banda ATR% debe cubrir el piso derivado de costes")
         if self.min_ema_slope_percent < 0 or self.min_volume_ratio <= 0:
             raise ValueError("Los umbrales de pendiente y volumen deben ser positivos")
         if (
@@ -63,6 +89,16 @@ class AdvancedStrategy:
         price = float(last["close"])
 
         atr_percent = atr / price if price > 0 and atr > 0 else None
+        stop_distance_percent = (
+            atr_percent * self.atr_stop_multiplier
+            if atr_percent is not None else None
+        )
+        cost_in_r = (
+            self.round_trip_cost_rate / stop_distance_percent
+            if stop_distance_percent is not None and stop_distance_percent > 0
+            else None
+        )
+        cost_r_ok = cost_in_r is not None and cost_in_r <= self.max_cost_r
         atr_band_ok = (
             atr_percent is not None
             and self.min_atr_percent <= atr_percent <= self.max_atr_percent
@@ -92,8 +128,18 @@ class AdvancedStrategy:
         regime_filters = {
             "atr_percent": round(atr_percent, 8) if atr_percent is not None else None,
             "min_atr_percent": self.min_atr_percent,
+            "derived_min_atr_percent": self.derived_min_atr_percent,
             "max_atr_percent": self.max_atr_percent,
             "atr_ok": bool(atr_band_ok),
+            "round_trip_cost_rate": self.round_trip_cost_rate,
+            "round_trip_cost_percent": self.round_trip_cost_rate * 100,
+            "stop_distance_percent": (
+                round(stop_distance_percent, 8)
+                if stop_distance_percent is not None else None
+            ),
+            "cost_in_r": round(cost_in_r, 8) if cost_in_r is not None else None,
+            "max_cost_r": self.max_cost_r,
+            "cost_r_ok": bool(cost_r_ok),
             "ema_trend_slope_percent": round(slope_value, 8) if slope_available else None,
             "min_ema_slope_percent": self.min_ema_slope_percent,
             "long_ema_slope_ok": bool(long_slope_ok),
@@ -228,8 +274,8 @@ class AdvancedStrategy:
 
         long_confirmed = all(long_categories.values())
         short_confirmed = all(short_categories.values())
-        regime_long_ok = atr_band_ok and long_slope_ok and volume_regime_ok
-        regime_short_ok = atr_band_ok and short_slope_ok and volume_regime_ok
+        regime_long_ok = atr_band_ok and cost_r_ok and long_slope_ok and volume_regime_ok
+        regime_short_ok = atr_band_ok and cost_r_ok and short_slope_ok and volume_regime_ok
         regime_filters["long_ok"] = bool(regime_long_ok)
         regime_filters["short_ok"] = bool(regime_short_ok)
         if not vwap_available:
@@ -268,6 +314,10 @@ class AdvancedStrategy:
             regime_blocks = []
             if not atr_band_ok:
                 regime_blocks.append("ATR% fuera de banda")
+            if not cost_r_ok:
+                regime_blocks.append(
+                    f"coste de ida y vuelta supera {self.max_cost_r:.2f}R"
+                )
             if not volume_regime_ok:
                 regime_blocks.append("volumen inferior a la media de 20 velas o no disponible")
             if not long_slope_ok and not short_slope_ok:

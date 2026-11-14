@@ -15,8 +15,8 @@ This route runs the same `AdvancedStrategyBacktestService` used by
   the first test candle's open, so no test-window entry is backdated.
 - Every fold starts with independent virtual capital. Aggregate P&L is the sum
   of fold P&L, not a compounded portfolio curve.
-- The same fees, adverse slippage, risk cap, 1R partial TP1, break-even stop and
-  TP2 logic are used in each fold.
+- The same fees, adverse slippage, risk cap, 1R partial TP1, 1.5R cost-aware
+  stop activation and TP2 logic are used in each fold.
 
 The response includes per-fold trade count, net P&L, expectancy, profit factor,
 drawdown, fees and test ranges, plus aggregate out-of-sample metrics and a
