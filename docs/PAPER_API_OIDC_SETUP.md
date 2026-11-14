@@ -82,12 +82,18 @@ are required for account creation, funding and trade entry.
 
 ## 5. Start and verify
 
-Install pinned dependencies, then start the API:
+Install pinned dependencies, then start the API from the repository root:
 
 ```sh
 python -m pip install -r requirements.txt
+PYTHONPATH=backend python -c "import main; print(main.app.title)"
 PYTHONPATH=backend uvicorn main:app --host 127.0.0.1 --port 8000
 ```
+
+Both the documented repository-root command and `cd backend && python -c "import main"`
+are supported. Do not set `PYTHONPATH=backend` after changing into the
+`backend` directory; that would point Python at a nested `backend/backend`
+path.
 
 Check `/health`, then configure the frontend to obtain an OIDC access token
 and send it as `Authorization: Bearer <access-token>`. Create a PAPER account
