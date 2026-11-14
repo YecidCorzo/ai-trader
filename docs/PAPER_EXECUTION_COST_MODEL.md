@@ -44,7 +44,9 @@ floors and checked again against the 1% engine limit before the ledger write.
 
 Exit fills apply adverse slippage and the exit fee is the greater of the
 caller-supplied amount and 0.10% of actual simulated exit notional. Stop
-monitoring still polls public market quotes; gaps and polling delay can cause
-losses larger than planned. This model is a conservative simulation
-assumption, not an exchange fill guarantee or a promise that realized losses
-cannot exceed 1%.
+monitoring polls public market quotes and closes at the next observed quote,
+not at the configured stop price. A gap and polling delay can therefore make
+realized loss exceed the 1.00% planned-risk budget: one observed scenario
+realized 194 USDT against 100 USDT planned (1.94×). The 1.00% limit is a
+position-sizing target, not a guaranteed maximum loss. This model is a
+conservative simulation assumption, not an exchange fill guarantee.
