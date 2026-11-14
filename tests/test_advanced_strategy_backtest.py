@@ -98,7 +98,7 @@ class AdvancedStrategyBacktestTests(unittest.TestCase):
         self.assertEqual(result["tp2_hit_rate_after_tp1_percent"], 100.0)
         self.assertAlmostEqual(trade["tp1_partial_quantity"], trade["quantity"] * 0.5, places=7)
         self.assertAlmostEqual(trade["remaining_quantity"], trade["quantity"] * 0.5, places=7)
-        self.assertAlmostEqual(trade["stop_after_tp1"], trade["entry"], places=8)
+        self.assertAlmostEqual(trade["stop_after_tp1"], trade["stop_loss"], places=8)
         self.assertAlmostEqual(
             trade["take_profit_1"] - trade["entry"],
             trade["entry"] - trade["stop_loss"],
