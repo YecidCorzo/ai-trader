@@ -200,8 +200,11 @@ class PaperAccountService:
                 self._connection.commit()
                 return dict(existing)
             balance = self._balance(account_id)
-            if signed < 0 and balance + signed < 0:
-                raise PaperAccountError("El movimiento supera el saldo disponible de la cuenta PAPER")
+            # Open positions reserve their notional plus entry fees. Withdrawals
+            # and negative adjustments must not consume that committed capital.
+            free_cash = balance - self.calculate_open_commitment(account_id)
+            if signed < 0 and free_cash + signed < 0:
+                raise PaperAccountError("El movimiento supera el efectivo libre de la cuenta PAPER")
             self._insert_event(
                 account_id=account_id, event_type=event_type, amount=signed,
                 currency=account["quote_currency"], idempotency_key=key,
@@ -275,6 +278,24 @@ class PaperAccountService:
         if not rows:
             raise MissingOpeningCapitalError("La cuenta PAPER no tiene capital inicial explícito")
         return sum((Decimal(row["amount"]) for row in rows), Decimal("0"))
+
+    def calculate_open_commitment(self, account_id: str) -> Decimal:
+        """Sum open-position notional and entry fees for one PAPER account."""
+        self.get_account(account_id)
+        rows = self._connection.execute(
+            """SELECT quantity, entry_price, entry_fee FROM paper_trades
+               WHERE paper_account_id = ? AND status = 'OPEN'""",
+            (account_id,),
+        ).fetchall()
+        return sum(
+            (Decimal(row["quantity"]) * Decimal(row["entry_price"])
+             + Decimal(row["entry_fee"]) for row in rows),
+            Decimal("0"),
+        )
+
+    def calculate_free_cash(self, account_id: str) -> Decimal:
+        """Return balance minus open-position notional and entry fees."""
+        return self._balance(account_id) - self.calculate_open_commitment(account_id)
 
     def calculate_equity(
         self, account_id: str, *, now: datetime | None = None,
