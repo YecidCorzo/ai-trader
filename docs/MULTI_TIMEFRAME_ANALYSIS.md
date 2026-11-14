@@ -3,15 +3,15 @@
 Endpoint: `GET /api/signal/multi-timeframe`.
 
 The endpoint analyzes the latest 500 **closed** Binance candles independently
-on 5m, 15m and 1h using the same AdvancedStrategy rules and verified indicator
-inputs used by `/api/signal/v2`:
+on 1h and 4h using the same AdvancedStrategy rules and verified indicator
+inputs used by `/api/signal/v2` (which also defaults to 1h):
 
 - EMA 9/21/50 and five-bar EMA50 slope
 - Wilder RSI(14)
 - MACD(12/26/9)
 - UTC-day anchored VWAP
 - ATR(14)
-- score categories and regime filters
+- score categories and regime filters, including round-trip cost no greater than 0.15R
 
 Each timeframe returns its own signal, scores, filter state, indicator values,
 closed-candle timestamp, entry, stop, targets, invalidation and reasons.
