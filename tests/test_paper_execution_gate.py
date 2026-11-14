@@ -302,6 +302,48 @@ class PaperExecutionGateTests(unittest.TestCase):
                 idempotency_key="too-large",
             )
 
+    def test_withdrawal_and_negative_adjustment_preserve_open_position_commitment(self):
+        self.open_position(quantity="90")
+        # 90 SOL at 100 USDT plus the 0.1 entry fee leaves 999.9 free.
+        with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
+            self.accounts.record_funding(
+                self.account["id"], event_type="WITHDRAWAL", amount="1000",
+                idempotency_key="withdraw-committed",
+            )
+        with self.assertRaisesRegex(PaperAccountError, "efectivo libre"):
+            self.accounts.record_funding(
+                self.account["id"], event_type="ADJUSTMENT", amount="-1000",
+                idempotency_key="adjust-committed",
+            )
+        self.assertEqual(
+            self.accounts.calculate_free_cash(self.account["id"]),
+            Decimal("999.9"),
+        )
+
+    def test_entry_notional_and_fee_cannot_exceed_free_cash(self):
+        self.execution = PaperExecutionService(
+            self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
+            account_service=self.accounts,
+        )
+        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position(quantity="10", stop_price="95", entry_fee="1", estimated_exit_fee="0")
+        self.assertEqual(raised.exception.reason, "insufficient_free_cash")
+        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
+
+    def test_total_open_commitment_cannot_exceed_current_equity(self):
+        self.execution = PaperExecutionService(
+            self.connection, risk_engine=RiskEngine(RiskLimits(max_open_positions=2)),
+            account_service=self.accounts,
+        )
+        self.open_position(quantity="90", stop_price="99.99", entry_fee="0", estimated_exit_fee="0")
+        self.provider.price = Decimal("99")
+        with self.assertRaises(RiskRejectedError) as raised:
+            self.open_position(quantity="9.5", stop_price="98.99", entry_fee="0", estimated_exit_fee="0")
+        self.assertEqual(raised.exception.reason, "committed_capital_exceeds_equity")
+        self.assertEqual(self.accounts.get_equity(self.account["id"]), Decimal("9910"))
+        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN'").fetchone()[0], 1)
+
     def test_stale_or_unavailable_price_fails_closed_for_open_positions(self):
         self.open_position()
         stale_accounts = PaperAccountService(
