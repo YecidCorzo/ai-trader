@@ -32,7 +32,10 @@ class AdvancedStrategyBacktestService:
         self.fee_rate = float(fee_rate)
         self.slippage_rate = float(slippage_rate)
         self.risk_per_trade = float(risk_per_trade)
-        self.strategy = strategy or AdvancedStrategy()
+        self.strategy = strategy or AdvancedStrategy(
+            fee_rate=self.fee_rate,
+            slippage_rate=self.slippage_rate,
+        )
         values = (self.initial_balance, self.fee_rate, self.slippage_rate, self.risk_per_trade)
         if not all(math.isfinite(value) for value in values):
             raise ValueError("Los parámetros deben ser valores finitos")
