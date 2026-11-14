@@ -1,3 +1,5 @@
+import math
+
 
 class AdvancedStrategy:
     """
@@ -10,11 +12,37 @@ class AdvancedStrategy:
         self,
         min_score=60,
         atr_stop_multiplier=1.5,
-        risk_reward=2.0
+        risk_reward=2.0,
+        min_atr_percent=0.001,
+        max_atr_percent=0.05,
+        min_ema_slope_percent=0.0001,
+        min_volume_ratio=1.0,
+        volume_mean_period=20,
     ):
         self.min_score = min_score
         self.atr_stop_multiplier = atr_stop_multiplier
         self.risk_reward = risk_reward
+        self.min_atr_percent = min_atr_percent
+        self.max_atr_percent = max_atr_percent
+        self.min_ema_slope_percent = min_ema_slope_percent
+        self.min_volume_ratio = min_volume_ratio
+        self.volume_mean_period = volume_mean_period
+        numeric_settings = (
+            self.min_atr_percent, self.max_atr_percent,
+            self.min_ema_slope_percent, self.min_volume_ratio,
+        )
+        if not all(math.isfinite(float(value)) for value in numeric_settings):
+            raise ValueError("Los filtros de régimen deben ser valores finitos")
+        if self.min_atr_percent < 0 or self.max_atr_percent <= self.min_atr_percent:
+            raise ValueError("La banda ATR% debe ser positiva y creciente")
+        if self.min_ema_slope_percent < 0 or self.min_volume_ratio <= 0:
+            raise ValueError("Los umbrales de pendiente y volumen deben ser positivos")
+        if (
+            not isinstance(self.volume_mean_period, int)
+            or isinstance(self.volume_mean_period, bool)
+            or self.volume_mean_period < 1
+        ):
+            raise ValueError("volume_mean_period debe ser un entero positivo")
 
     def evaluate(
         self,
@@ -25,13 +53,58 @@ class AdvancedStrategy:
         rsi,
         macd,
         vwap,
-        atr
+        atr,
+        ema_trend_slope=None,
     ):
         if not candles:
             raise ValueError("No hay velas para analizar")
 
         last = candles[-1]
         price = float(last["close"])
+
+        atr_percent = atr / price if price > 0 and atr > 0 else None
+        atr_band_ok = (
+            atr_percent is not None
+            and self.min_atr_percent <= atr_percent <= self.max_atr_percent
+        )
+        slope_available = (
+            ema_trend_slope is not None
+            and isinstance(ema_trend_slope, (int, float))
+            and math.isfinite(float(ema_trend_slope))
+        )
+        slope_value = float(ema_trend_slope) if slope_available else None
+        long_slope_ok = slope_available and slope_value > self.min_ema_slope_percent
+        short_slope_ok = slope_available and slope_value < -self.min_ema_slope_percent
+
+        recent_volumes = [
+            float(candle.get("volume", 0))
+            for candle in candles[-self.volume_mean_period:]
+        ]
+        volume_mean = (
+            sum(recent_volumes) / self.volume_mean_period
+            if len(recent_volumes) == self.volume_mean_period
+            else None
+        )
+        current_volume = float(last.get("volume", 0))
+        volume_ratio = current_volume / volume_mean if volume_mean and volume_mean > 0 else None
+        volume_regime_ok = volume_ratio is not None and volume_ratio >= self.min_volume_ratio
+
+        regime_filters = {
+            "atr_percent": round(atr_percent, 8) if atr_percent is not None else None,
+            "min_atr_percent": self.min_atr_percent,
+            "max_atr_percent": self.max_atr_percent,
+            "atr_ok": bool(atr_band_ok),
+            "ema_trend_slope_percent": round(slope_value, 8) if slope_available else None,
+            "min_ema_slope_percent": self.min_ema_slope_percent,
+            "long_ema_slope_ok": bool(long_slope_ok),
+            "short_ema_slope_ok": bool(short_slope_ok),
+            "volume_mean_period": self.volume_mean_period,
+            "current_volume": current_volume,
+            "volume_mean": round(volume_mean, 8) if volume_mean is not None else None,
+            "volume_ratio": round(volume_ratio, 8) if volume_ratio is not None else None,
+            "min_volume_ratio": self.min_volume_ratio,
+            "volume_ok": bool(volume_regime_ok),
+        }
 
         if atr <= 0:
             return {
@@ -44,6 +117,7 @@ class AdvancedStrategy:
                 "take_profit_2": None,
                 "invalidation": None,
                 "risk_reward": self.risk_reward,
+                "regime_filters": regime_filters,
                 "long_score": 0,
                 "short_score": 0,
                 "category_scores": {
@@ -154,12 +228,16 @@ class AdvancedStrategy:
 
         long_confirmed = all(long_categories.values())
         short_confirmed = all(short_categories.values())
+        regime_long_ok = atr_band_ok and long_slope_ok and volume_regime_ok
+        regime_short_ok = atr_band_ok and short_slope_ok and volume_regime_ok
+        regime_filters["long_ok"] = bool(regime_long_ok)
+        regime_filters["short_ok"] = bool(regime_short_ok)
         if not vwap_available:
             long_reasons.append("VWAP no disponible: falta confirmación de volumen")
             short_reasons.append("VWAP no disponible: falta confirmación de volumen")
 
         # Seleccionar señal
-        if long_confirmed and long_score >= self.min_score and long_score > short_score:
+        if long_confirmed and regime_long_ok and long_score >= self.min_score and long_score > short_score:
             signal = "LONG"
             score = long_score
             reasons = long_reasons
@@ -167,7 +245,7 @@ class AdvancedStrategy:
             risk = price - stop_loss
             tp1 = price + risk
             tp2 = price + risk * self.risk_reward
-        elif short_confirmed and short_score >= self.min_score and short_score > long_score:
+        elif short_confirmed and regime_short_ok and short_score >= self.min_score and short_score > long_score:
             signal = "SHORT"
             score = short_score
             reasons = short_reasons
@@ -187,6 +265,15 @@ class AdvancedStrategy:
             reasons = ["No hay suficiente confirmación técnica"]
             if missing:
                 reasons.append("Faltan categorías de confirmación: " + ", ".join(missing))
+            regime_blocks = []
+            if not atr_band_ok:
+                regime_blocks.append("ATR% fuera de banda")
+            if not volume_regime_ok:
+                regime_blocks.append("volumen inferior a la media de 20 velas o no disponible")
+            if not long_slope_ok and not short_slope_ok:
+                regime_blocks.append("pendiente EMA50 insuficiente o no disponible")
+            if regime_blocks:
+                reasons.append("Filtros de régimen bloquean señal: " + "; ".join(regime_blocks))
             stop_loss = None
             tp1 = None
             tp2 = None
@@ -215,6 +302,7 @@ class AdvancedStrategy:
             "long_score": long_score,
             "short_score": short_score,
             "category_scores": category_scores,
+            "regime_filters": regime_filters,
             "category_confirmations": {
                 "long": long_categories,
                 "short": short_categories,

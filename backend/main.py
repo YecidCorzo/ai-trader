@@ -3,10 +3,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import logging
+import os
 
 from services.market_services import MarketService
 from services.signal_validation import validate_signal_history
-from indicators.ema import calculate_ema
+from indicators.ema import calculate_ema, calculate_ema_series
 from indicators.rsi import calculate_rsi
 from indicators.macd import calculate_macd
 from indicators.vwap import calculate_vwap
@@ -16,7 +17,13 @@ from strategies.advanced_strategy import AdvancedStrategy
 from services.backtest_service import BacktestService
 from services.advanced_strategy_backtest import AdvancedStrategyBacktestService
 from services.backtest_review import review_backtest
-from services.backtest_research import run_walk_forward_backtests
+from services.backtest_research import run_walk_forward_backtests, run_advanced_strategy_walk_forward_backtests
+from services.strategy_acceptance import evaluate_advanced_strategy_go_no_go
+from services.multi_timeframe_analysis import MultiTimeframeAnalysisService
+try:
+    from backend.api.paper_routes import router as paper_router
+except ImportError:
+    from api.paper_routes import router as paper_router
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +34,22 @@ def _internal_server_error(operation):
 
 
 app = FastAPI(title="AI Trader API")
+app.include_router(paper_router)
 market_service = MarketService("SOLUSDT")
 strategy = EmaRsiStrategy()
+cors_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "AI_TRADER_CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 @app.get("/")
@@ -131,6 +147,15 @@ def get_signal():
     }
 
 
+@app.get("/api/signal/multi-timeframe")
+def get_multi_timeframe_signal():
+    """Return 5m/15m/1h closed-candle signals and strict directional consensus."""
+    try:
+        service = MultiTimeframeAnalysisService(market_service, limit=500)
+        return service.run()
+    except Exception:
+        raise _internal_server_error("multi_timeframe_signal") from None
+
 @app.get("/api/signal/v2")
 def get_signal_v2():
     try:
@@ -162,7 +187,13 @@ def get_signal_v2():
         # exactly one period changes the EMA seed and diverges from backtests.
         ema_fast = calculate_ema(closes, 9)
         ema_slow = calculate_ema(closes, 21)
-        ema_trend = calculate_ema(closes, 50)
+        ema_trend_series = calculate_ema_series(closes, 50)
+        ema_trend = ema_trend_series[-1]
+        ema_trend_slope = (
+            (ema_trend_series[-1] - ema_trend_series[-6]) / ema_trend_series[-6]
+            if len(ema_trend_series) >= 6 and ema_trend_series[-6] != 0
+            else None
+        )
 
         # Calcular indicadores
         rsi = calculate_rsi(closes, period=14)
@@ -178,6 +209,7 @@ def get_signal_v2():
             ema_fast=ema_fast,
             ema_slow=ema_slow,
             ema_trend=ema_trend,
+            ema_trend_slope=ema_trend_slope,
             rsi=rsi,
             macd=macd,
             vwap=vwap,
@@ -293,6 +325,109 @@ def run_advanced_backtest(
         raise
     except Exception:
         raise _internal_server_error("advanced_strategy_backtest") from None
+
+@app.get("/api/backtest/advanced/acceptance")
+def get_advanced_strategy_acceptance(
+    limit: int = Query(10000, ge=100, le=100000),
+    interval: str = Query("1d"),
+    train_size: int = Query(5000, ge=50, le=90000),
+    validation_size: int = Query(1000, ge=1, le=50000),
+    test_size: int = Query(1000, ge=2, le=50000),
+    step_size: int = Query(1000, ge=1, le=50000),
+):
+    """Apply the pre-registered go/no-go gates to AdvancedStrategy OOS folds."""
+    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
+    if interval not in allowed_intervals:
+        raise HTTPException(status_code=400, detail="Intervalo no soportado")
+    if step_size < test_size:
+        raise HTTPException(status_code=400, detail="step_size debe ser mayor o igual que test_size")
+    required = train_size + validation_size + test_size
+    if required > limit:
+        raise HTTPException(status_code=400, detail="limit debe cubrir train_size + validation_size + test_size")
+    try:
+        raw_candles = market_service.get_candles(interval=interval, limit=limit, closed_only=True)
+        if len(raw_candles) < required:
+            raise HTTPException(status_code=422, detail=f"Histórico insuficiente: se necesitan {required} velas y llegaron {len(raw_candles)}")
+        walk_forward = run_advanced_strategy_walk_forward_backtests(
+            raw_candles,
+            train_size=train_size,
+            validation_size=validation_size,
+            test_size=test_size,
+            step_size=step_size,
+            backtest_kwargs={
+                "initial_balance": 10000.0,
+                "fee_rate": 0.001,
+                "slippage_rate": 0.0005,
+                "risk_per_trade": 0.01,
+            },
+        )
+        decision = evaluate_advanced_strategy_go_no_go(walk_forward)
+        walk_forward_summary = {key: value for key, value in walk_forward.items() if key != "trades"}
+        return {
+            "mode": "paper",
+            "symbol": "SOL/USDT",
+            "interval": interval,
+            "candles_requested": limit,
+            "candles_received": len(raw_candles),
+            "history_start": raw_candles[0][0],
+            "history_end": raw_candles[-1][0],
+            "decision": decision,
+            "walk_forward": walk_forward_summary,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise _internal_server_error("advanced_strategy_acceptance") from None
+
+@app.get("/api/backtest/advanced/walk-forward")
+def run_advanced_strategy_walk_forward(
+    limit: int = Query(10000, ge=100, le=100000),
+    interval: str = Query("1d"),
+    train_size: int = Query(5000, ge=50, le=90000),
+    validation_size: int = Query(1000, ge=1, le=50000),
+    test_size: int = Query(1000, ge=2, le=50000),
+    step_size: int = Query(1000, ge=1, le=50000),
+):
+    """Run fixed-parameter AdvancedStrategy chronological out-of-sample folds."""
+    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
+    if interval not in allowed_intervals:
+        raise HTTPException(status_code=400, detail="Intervalo no soportado")
+    if step_size < test_size:
+        raise HTTPException(status_code=400, detail="step_size debe ser mayor o igual que test_size")
+    required = train_size + validation_size + test_size
+    if required > limit:
+        raise HTTPException(status_code=400, detail="limit debe cubrir train_size + validation_size + test_size")
+    try:
+        raw_candles = market_service.get_candles(interval=interval, limit=limit, closed_only=True)
+        if len(raw_candles) < required:
+            raise HTTPException(status_code=422, detail=f"Histórico insuficiente: se necesitan {required} velas y llegaron {len(raw_candles)}")
+        result = run_advanced_strategy_walk_forward_backtests(
+            raw_candles,
+            train_size=train_size,
+            validation_size=validation_size,
+            test_size=test_size,
+            step_size=step_size,
+            backtest_kwargs={
+                "initial_balance": 10000.0,
+                "fee_rate": 0.001,
+                "slippage_rate": 0.0005,
+                "risk_per_trade": 0.01,
+            },
+        )
+        result.update({
+            "symbol": "SOL/USDT",
+            "interval": interval,
+            "candles_requested": limit,
+            "candles_received": len(raw_candles),
+            "history_start": raw_candles[0][0],
+            "history_end": raw_candles[-1][0],
+            "mode": "paper",
+        })
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise _internal_server_error("advanced_strategy_walk_forward") from None
 
 @app.get("/api/backtest/walk-forward")
 def run_walk_forward(
