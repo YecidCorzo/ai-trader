@@ -102,17 +102,63 @@ class MarketServicePaginationTests(unittest.TestCase):
         self.assertEqual(get.call_args.kwargs["params"]["interval"], "5m")
         self.assertEqual(get.call_args.kwargs["timeout"], 10)
 
-    def test_http_errors_are_propagated_to_the_api_layer(self):
+    def test_upstream_http_errors_are_mapped_to_gateway_status(self):
         from unittest.mock import Mock, patch
         import requests
-        from services.market_services import MarketService
+        from services.market_services import MarketDataError, MarketService
 
         response = Mock()
-        response.raise_for_status.side_effect = requests.HTTPError("rate limited")
+        response.status_code = 429
+        response.raise_for_status.side_effect = requests.HTTPError(
+            "rate limited", response=response
+        )
 
         with patch("services.market_services.requests.get", return_value=response):
-            with self.assertRaisesRegex(requests.HTTPError, "rate limited"):
+            with self.assertRaises(MarketDataError) as raised:
                 MarketService().get_candles(limit=10)
+        self.assertEqual(raised.exception.status_code, 503)
+
+    def test_bad_upstream_http_status_maps_to_502(self):
+        from unittest.mock import Mock, patch
+        import requests
+        from services.market_services import MarketDataError, MarketService
+
+        response = Mock()
+        response.status_code = 400
+        response.raise_for_status.side_effect = requests.HTTPError(
+            "bad request", response=response
+        )
+
+        with patch("services.market_services.requests.get", return_value=response):
+            with self.assertRaises(MarketDataError) as raised:
+                MarketService().get_price()
+        self.assertEqual(raised.exception.status_code, 502)
+
+    def test_upstream_timeout_maps_to_503(self):
+        from unittest.mock import patch
+        import requests
+        from services.market_services import MarketDataError, MarketService
+
+        with patch(
+            "services.market_services.requests.get",
+            side_effect=requests.Timeout("timed out"),
+        ):
+            with self.assertRaises(MarketDataError) as raised:
+                MarketService().get_price()
+        self.assertEqual(raised.exception.status_code, 503)
+
+    def test_invalid_upstream_ticker_payload_maps_to_502(self):
+        from unittest.mock import Mock, patch
+        from services.market_services import MarketDataError, MarketService
+
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"unexpected": "payload"}
+
+        with patch("services.market_services.requests.get", return_value=response):
+            with self.assertRaises(MarketDataError) as raised:
+                MarketService().get_price()
+        self.assertEqual(raised.exception.status_code, 502)
 
 
 
