@@ -1,6 +1,11 @@
 import unittest
+from unittest.mock import patch
 
-from backend.services.strategy_acceptance import evaluate_advanced_strategy_go_no_go
+from backend.main import app, get_advanced_strategy_acceptance
+from backend.services.strategy_acceptance import (
+    evaluate_advanced_strategy_go_no_go,
+    ADVANCED_STRATEGY_ACCEPTANCE_CONFIG,
+)
 
 
 def walk_forward_fixture():
@@ -20,6 +25,61 @@ def walk_forward_fixture():
 
 
 class AdvancedStrategyAcceptanceTests(unittest.TestCase):
+    def test_acceptance_config_is_frozen_to_solusdt_hourly_windows(self):
+        self.assertEqual(ADVANCED_STRATEGY_ACCEPTANCE_CONFIG, {
+            "config_id": "SOLUSDT-1H-10000-5000-1000-1000-1000-v1",
+            "symbol": "SOL/USDT",
+            "market_symbol": "SOLUSDT",
+            "interval": "1h",
+            "limit": 10000,
+            "train_size": 5000,
+            "validation_size": 1000,
+            "test_size": 1000,
+            "step_size": 1000,
+            "required_bars": 7000,
+            "expected_folds_at_full_history": 4,
+        })
+
+    def test_acceptance_endpoint_has_no_user_overridable_window_parameters(self):
+        parameters = app.openapi()["paths"]["/api/backtest/advanced/acceptance"]["get"].get("parameters", [])
+        self.assertEqual(parameters, [])
+
+    @patch("backend.main.run_advanced_strategy_walk_forward_backtests")
+    @patch("backend.main.market_service")
+    def test_acceptance_uses_exact_preregistered_market_and_windows(self, market, run_walk_forward):
+        rows = [[index, 100.0, 101.0, 99.0, 100.0, 10.0] for index in range(10000)]
+        market.get_candles.return_value = rows
+        run_walk_forward.return_value = walk_forward_fixture()
+
+        result = get_advanced_strategy_acceptance()
+
+        market.get_candles.assert_called_once_with(
+            interval="1h", limit=10000, closed_only=True,
+        )
+        run_walk_forward.assert_called_once()
+        args, kwargs = run_walk_forward.call_args
+        self.assertEqual(len(args[0]), 10000)
+        self.assertEqual(kwargs["train_size"], 5000)
+        self.assertEqual(kwargs["validation_size"], 1000)
+        self.assertEqual(kwargs["test_size"], 1000)
+        self.assertEqual(kwargs["step_size"], 1000)
+        self.assertEqual(result["acceptance_config"]["config_id"], "SOLUSDT-1H-10000-5000-1000-1000-1000-v1")
+        self.assertTrue(result["history_complete"])
+        self.assertEqual(result["decision"]["decision"], "GO")
+
+    @patch("backend.main.run_advanced_strategy_walk_forward_backtests")
+    @patch("backend.main.market_service")
+    def test_insufficient_real_history_returns_no_go_not_server_error(self, market, run_walk_forward):
+        market.get_candles.return_value = [
+            [index, 100.0, 101.0, 99.0, 100.0, 10.0] for index in range(6999)
+        ]
+
+        result = get_advanced_strategy_acceptance()
+
+        run_walk_forward.assert_not_called()
+        self.assertFalse(result["history_complete"])
+        self.assertEqual(result["decision"]["decision"], "NO_GO")
+        self.assertEqual(result["decision"]["criteria_passed"], 0)
     def test_go_requires_all_pre_registered_oos_gates(self):
         result = evaluate_advanced_strategy_go_no_go(walk_forward_fixture())
         self.assertEqual(result["decision"], "GO")
