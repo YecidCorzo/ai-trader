@@ -13,6 +13,23 @@ MIN_TRADES_PER_FOLD = 25
 MIN_POSITIVE_FOLD_RATIO = 0.75
 MIN_FOLD_PROFIT_FACTOR = 1.0
 
+# Frozen acceptance sample: SOL/USDT hourly candles, four non-overlapping
+# 1,000-candle OOS folds after fixed 5,000/1,000 train/validation windows.
+ADVANCED_STRATEGY_ACCEPTANCE_CONFIG_ID = "SOLUSDT-1H-10000-5000-1000-1000-1000-v1"
+ADVANCED_STRATEGY_ACCEPTANCE_CONFIG = {
+    "config_id": ADVANCED_STRATEGY_ACCEPTANCE_CONFIG_ID,
+    "symbol": "SOL/USDT",
+    "market_symbol": "SOLUSDT",
+    "interval": "1h",
+    "limit": 10000,
+    "train_size": 5000,
+    "validation_size": 1000,
+    "test_size": 1000,
+    "step_size": 1000,
+    "required_bars": 7000,
+    "expected_folds_at_full_history": 4,
+}
+
 
 def _number(value):
     try:
