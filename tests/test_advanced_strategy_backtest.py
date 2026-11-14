@@ -89,6 +89,13 @@ class AdvancedStrategyBacktestTests(unittest.TestCase):
         self.assertEqual(trade["exit_time"], 52)
         self.assertEqual(trade["exit_reason"], "take_profit_2")
         self.assertTrue(trade["tp1_hit"])
+        self.assertTrue(trade["tp2_hit"])
+        self.assertGreater(trade["mfe_r"], 2.0)
+        self.assertGreaterEqual(trade["mae_r"], 0.0)
+        self.assertGreater(trade["cost_in_r"], 0.0)
+        self.assertEqual(result["tp2_hits"], 1)
+        self.assertEqual(result["tp2_hit_rate_percent"], 100.0)
+        self.assertEqual(result["tp2_hit_rate_after_tp1_percent"], 100.0)
         self.assertAlmostEqual(trade["tp1_partial_quantity"], trade["quantity"] * 0.5, places=7)
         self.assertAlmostEqual(trade["remaining_quantity"], trade["quantity"] * 0.5, places=7)
         self.assertAlmostEqual(trade["stop_after_tp1"], trade["entry"], places=8)
@@ -128,25 +135,50 @@ class AdvancedStrategyBacktestTests(unittest.TestCase):
         self.assertGreater(trade["exit"], trade["take_profit_2"])
         self.assertEqual(trade["exit_reason"], "take_profit_2")
 
-    def test_long_moves_remaining_stop_to_break_even_after_tp1(self):
+    def test_long_keeps_original_stop_until_price_reaches_1_5r(self):
         rows = candles_fixture("LONG")
         rows[52].update({"open": 100.0, "high": 103.0, "low": 99.0})
         result = AdvancedStrategyBacktestService(strategy=StubAdvancedStrategy("LONG")).run(rows)
         trade = result["trades"][0]
         self.assertTrue(trade["tp1_hit"])
-        self.assertEqual(trade["exit_reason"], "breakeven_stop")
-        self.assertAlmostEqual(trade["stop_after_tp1"], trade["entry"], places=8)
-        self.assertLess(trade["exit"], trade["entry"])
+        self.assertFalse(trade["cost_stop_activated"])
+        self.assertEqual(trade["exit_reason"], "end_of_data")
+        self.assertAlmostEqual(trade["stop_after_tp1"], trade["stop_loss"], places=8)
 
-    def test_short_moves_remaining_stop_to_break_even_after_tp1(self):
+    def test_short_keeps_original_stop_until_price_reaches_1_5r(self):
         rows = candles_fixture("SHORT")
         rows[52].update({"open": 100.0, "high": 100.1, "low": 97.0})
         result = AdvancedStrategyBacktestService(strategy=StubAdvancedStrategy("SHORT")).run(rows)
         trade = result["trades"][0]
         self.assertTrue(trade["tp1_hit"])
-        self.assertEqual(trade["exit_reason"], "breakeven_stop")
-        self.assertAlmostEqual(trade["stop_after_tp1"], trade["entry"], places=8)
+        self.assertFalse(trade["cost_stop_activated"])
+        self.assertEqual(trade["exit_reason"], "end_of_data")
+        self.assertAlmostEqual(trade["stop_after_tp1"], trade["stop_loss"], places=8)
+
+    def test_long_activates_cost_aware_stop_only_after_1_5r(self):
+        rows = candles_fixture("LONG")
+        rows[52].update({"open": 101.0, "high": 108.0, "low": 101.0, "close": 107.0})
+        rows[53].update({"open": 104.0, "high": 106.0, "low": 100.1, "close": 104.0})
+        result = AdvancedStrategyBacktestService(strategy=StubAdvancedStrategy("LONG")).run(rows)
+        trade = result["trades"][0]
+        self.assertTrue(trade["tp1_hit"])
+        self.assertTrue(trade["cost_stop_activated"])
+        self.assertEqual(trade["cost_stop_activation_r"], 1.5)
+        self.assertEqual(trade["exit_reason"], "cost_aware_stop")
+        self.assertGreater(trade["cost_aware_stop_price"], trade["entry"])
         self.assertGreater(trade["exit"], trade["entry"])
+
+    def test_short_activates_cost_aware_stop_only_after_1_5r(self):
+        rows = candles_fixture("SHORT")
+        rows[52].update({"open": 99.0, "high": 99.0, "low": 92.0, "close": 93.0})
+        rows[53].update({"open": 96.0, "high": 99.8, "low": 94.0, "close": 96.0})
+        result = AdvancedStrategyBacktestService(strategy=StubAdvancedStrategy("SHORT")).run(rows)
+        trade = result["trades"][0]
+        self.assertTrue(trade["tp1_hit"])
+        self.assertTrue(trade["cost_stop_activated"])
+        self.assertEqual(trade["exit_reason"], "cost_aware_stop")
+        self.assertLess(trade["cost_aware_stop_price"], trade["entry"])
+        self.assertLess(trade["exit"], trade["entry"])
 
     def test_original_stop_wins_if_stop_and_tp1_are_touched_in_same_bar(self):
         rows = candles_fixture("LONG")
