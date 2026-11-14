@@ -354,10 +354,16 @@ class AdvancedStrategyBacktestService:
                                 exit_reason = "take_profit_2"
                                 tp2_hit = True
                         else:
-                            if open_price >= stop or candle["high"] >= stop:
-                                fill_quote = open_price if open_price >= stop else stop
+                            risk_exit_level = min(stop, liquidation) if liquidation is not None else stop
+                            risk_exit_reason = (
+                                "liquidation"
+                                if liquidation is not None and liquidation < stop
+                                else "stop_loss_after_tp1"
+                            )
+                            if open_price >= risk_exit_level or candle["high"] >= risk_exit_level:
+                                fill_quote = open_price if open_price >= risk_exit_level else risk_exit_level
                                 exit_price = fill_quote * (1 + self.slippage_rate)
-                                exit_reason = "stop_loss_after_tp1"
+                                exit_reason = risk_exit_reason
                             elif candle["low"] <= target_2:
                                 exit_price = target_2 * (1 + self.slippage_rate)
                                 exit_reason = "take_profit_2"
