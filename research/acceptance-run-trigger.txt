@@ -1,0 +1,1 @@
+Trigger commit for the pre-registered SOLUSDT 1h real-history acceptance workflow. This file is research-run metadata only and is not part of the application.
