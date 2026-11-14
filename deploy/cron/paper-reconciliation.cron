@@ -1,0 +1,7 @@
+# Install with: crontab deploy/cron/paper-reconciliation.cron
+# Configure MAILTO to an operational mailbox before installing. Cron mails
+# stderr/stdout; the task emits no success-level output at WARNING log level.
+MAILTO=root
+SHELL=/bin/sh
+
+*/5 * * * * cd /opt/ai-trader && /usr/bin/flock -n /var/lock/ai-trader-paper-reconciliation.lock env AI_TRADER_DB_PATH=/var/lib/ai-trader/paper.sqlite AI_TRADER_LOG_LEVEL=WARNING /opt/ai-trader/.venv/bin/python -m backend.services.paper_reconciliation_task

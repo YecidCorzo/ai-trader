@@ -59,12 +59,18 @@ class CircuitBreaker:
         else:
             self._repository.set_halted(**arguments)
 
-    def halt(self, reason: str, *, updated_by: str = "operator") -> dict:
+    def halt(
+        self, reason: str, *, updated_by: str = "operator",
+        actor: dict | None = None,
+    ) -> dict:
         reason = reason.strip()
         if not reason:
             raise ValueError("Se requiere un motivo para detener PAPER MODE")
         now = _utc_now()
-        details = {"reason": reason, "updated_by": updated_by}
+        details = {
+            "reason": reason, "updated_by": updated_by,
+            "actor": actor or {"type": "system", "name": updated_by},
+        }
         if self._account_id is not None:
             details["account_id"] = self._account_id
         try:
@@ -81,12 +87,17 @@ class CircuitBreaker:
             raise
         return self.status()
 
-    def reset(self, *, confirmed_by: str) -> dict:
+    def reset(
+        self, *, confirmed_by: str, actor: dict | None = None,
+    ) -> dict:
         confirmed_by = confirmed_by.strip()
         if not confirmed_by:
             raise ValueError("El rearme requiere confirmación explícita del operador")
         now = _utc_now()
-        details = {"confirmed_by": confirmed_by}
+        details = {
+            "confirmed_by": confirmed_by,
+            "actor": actor or {"type": "system", "name": confirmed_by},
+        }
         if self._account_id is not None:
             details["account_id"] = self._account_id
         try:

@@ -52,6 +52,7 @@ class TradeLedger:
         quantity: Decimal | str, entry_price: Decimal | str,
         entry_fee: Decimal | str = "0", opened_at: datetime | None = None,
         metadata: dict | None = None, paper_account_id: str | None = None,
+        idempotency_key: str | None = None, actor: dict | None = None,
     ) -> dict:
         symbol = symbol.strip().upper()
         strategy = strategy.strip()
@@ -69,6 +70,8 @@ class TradeLedger:
             "mode": "paper", "symbol": symbol, "side": side,
             "quantity": format(qty, "f"), "entry_price": format(price, "f"),
             "entry_fee": format(fee, "f"), "paper_account_id": paper_account_id,
+            "idempotency_key": idempotency_key,
+            "actor": actor or {"type": "system", "name": "internal_ledger"},
         }
         try:
             self._repository.create_trade({
@@ -79,6 +82,7 @@ class TradeLedger:
                 "metadata_json": json.dumps(metadata or {}, sort_keys=True),
                 "event_details_json": json.dumps(event_details, sort_keys=True),
                 "paper_account_id": paper_account_id,
+                "idempotency_key": idempotency_key,
             })
             self._connection.commit()
         except Exception:
@@ -89,7 +93,7 @@ class TradeLedger:
     def close_trade(
         self, trade_id: str, *, exit_price: Decimal | str,
         exit_fee: Decimal | str = "0", closed_at: datetime | None = None,
-        exit_reason: str | None = None,
+        exit_reason: str | None = None, actor: dict | None = None,
     ) -> dict:
         trade = self._repository.get_trade(trade_id)
         if trade is None:
@@ -113,6 +117,7 @@ class TradeLedger:
             "mode": "paper", "exit_price": str(price),
             "exit_fee": str(fee), "gross_pnl": str(gross_pnl),
             "realized_pnl": format(realized, "f"), "exit_reason": exit_reason,
+            "actor": actor or {"type": "system", "name": "internal_ledger"},
         }
         try:
             updated = self._repository.close_trade(
