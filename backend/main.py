@@ -18,7 +18,10 @@ from services.backtest_service import BacktestService
 from services.advanced_strategy_backtest import AdvancedStrategyBacktestService
 from services.backtest_review import review_backtest
 from services.backtest_research import run_walk_forward_backtests, run_advanced_strategy_walk_forward_backtests
-from services.strategy_acceptance import evaluate_advanced_strategy_go_no_go
+from services.strategy_acceptance import (
+    evaluate_advanced_strategy_go_no_go,
+    ADVANCED_STRATEGY_ACCEPTANCE_CONFIG,
+)
 from services.multi_timeframe_analysis import MultiTimeframeAnalysisService
 try:
     from backend.api.paper_routes import router as paper_router
@@ -327,50 +330,59 @@ def run_advanced_backtest(
         raise _internal_server_error("advanced_strategy_backtest") from None
 
 @app.get("/api/backtest/advanced/acceptance")
-def get_advanced_strategy_acceptance(
-    limit: int = Query(10000, ge=100, le=100000),
-    interval: str = Query("1d"),
-    train_size: int = Query(5000, ge=50, le=90000),
-    validation_size: int = Query(1000, ge=1, le=50000),
-    test_size: int = Query(1000, ge=2, le=50000),
-    step_size: int = Query(1000, ge=1, le=50000),
-):
-    """Apply the pre-registered go/no-go gates to AdvancedStrategy OOS folds."""
-    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
-    if interval not in allowed_intervals:
-        raise HTTPException(status_code=400, detail="Intervalo no soportado")
-    if step_size < test_size:
-        raise HTTPException(status_code=400, detail="step_size debe ser mayor o igual que test_size")
-    required = train_size + validation_size + test_size
-    if required > limit:
-        raise HTTPException(status_code=400, detail="limit debe cubrir train_size + validation_size + test_size")
+def get_advanced_strategy_acceptance():
+    """Run the immutable, pre-registered SOL/USDT 1h acceptance sample."""
+    config = dict(ADVANCED_STRATEGY_ACCEPTANCE_CONFIG)
     try:
-        raw_candles = market_service.get_candles(interval=interval, limit=limit, closed_only=True)
-        if len(raw_candles) < required:
-            raise HTTPException(status_code=422, detail=f"Histórico insuficiente: se necesitan {required} velas y llegaron {len(raw_candles)}")
-        walk_forward = run_advanced_strategy_walk_forward_backtests(
-            raw_candles,
-            train_size=train_size,
-            validation_size=validation_size,
-            test_size=test_size,
-            step_size=step_size,
-            backtest_kwargs={
-                "initial_balance": 10000.0,
-                "fee_rate": 0.001,
-                "slippage_rate": 0.0005,
-                "risk_per_trade": 0.01,
-            },
+        raw_candles = market_service.get_candles(
+            interval=config["interval"],
+            limit=config["limit"],
+            closed_only=True,
         )
+        raw_candles = raw_candles[-config["limit"]:]
+        history_count = len(raw_candles)
+
+        if history_count >= config["required_bars"]:
+            walk_forward = run_advanced_strategy_walk_forward_backtests(
+                raw_candles,
+                train_size=config["train_size"],
+                validation_size=config["validation_size"],
+                test_size=config["test_size"],
+                step_size=config["step_size"],
+                backtest_kwargs={
+                    "initial_balance": 10000.0,
+                    "fee_rate": 0.001,
+                    "slippage_rate": 0.0005,
+                    "risk_per_trade": 0.01,
+                },
+            )
+        else:
+            # Insufficient real history is a published NO_GO, not a server error.
+            walk_forward = {
+                "total_trades": 0,
+                "expectancy_per_trade": None,
+                "profit_factor": None,
+                "max_fold_drawdown_percent": None,
+                "fold_count": 0,
+                "folds": [],
+                "trades": [],
+            }
+
         decision = evaluate_advanced_strategy_go_no_go(walk_forward)
-        walk_forward_summary = {key: value for key, value in walk_forward.items() if key != "trades"}
+        walk_forward_summary = {
+            key: value for key, value in walk_forward.items() if key != "trades"
+        }
         return {
             "mode": "paper",
-            "symbol": "SOL/USDT",
-            "interval": interval,
-            "candles_requested": limit,
-            "candles_received": len(raw_candles),
-            "history_start": raw_candles[0][0],
-            "history_end": raw_candles[-1][0],
+            "acceptance_config": config,
+            "symbol": config["symbol"],
+            "market_symbol": config["market_symbol"],
+            "interval": config["interval"],
+            "candles_requested": config["limit"],
+            "candles_received": history_count,
+            "history_complete": history_count >= config["limit"],
+            "history_start": raw_candles[0][0] if raw_candles else None,
+            "history_end": raw_candles[-1][0] if raw_candles else None,
             "decision": decision,
             "walk_forward": walk_forward_summary,
         }
