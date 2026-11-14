@@ -16,11 +16,16 @@ position is entered at the next candle's open with adverse slippage.
 - Stops and TP2 are resolved against candle OHLC. If both are touched in the
   same candle, the existing conservative resolver assumes the stop occurred
   first. Stop gaps fill at the candle open plus adverse slippage.
-- The initial implementation exits the full position at TP2. TP1 is reported
-  but partial TP1 execution and break-even stop movement are deliberately
-  deferred to their own strategy PR.
+- The backtest closes 50% of the position at TP1 (1R), allocates entry/exit
+  fees proportionally, and moves the remaining stop to the actual simulated
+  entry fill (break-even). The remaining half exits at TP2 or the break-even
+  stop. If the original stop and TP1 are both touched in the same OHLC candle,
+  the original stop is resolved first. If TP1 is touched and the candle's
+  adverse extreme also crosses break-even, the remaining half is conservatively
+  assumed stopped at break-even because intrabar ordering is unknowable.
 - The report includes trade count, net P&L, expectancy, win rate, profit
-  factor, maximum drawdown, fees, reasons and timestamps.
+  factor, maximum drawdown, total fees, partial TP1 quantities/fees/P&L,
+  break-even stop, reasons and timestamps.
 
 ## Limitations
 

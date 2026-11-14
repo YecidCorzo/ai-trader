@@ -8,7 +8,7 @@ try:
     from backend.services.backtest_service import BacktestService
     from backend.indicators.rsi import calculate_rsi_series
     from backend.indicators.macd import calculate_macd
-    from backend.indicators.vwap import calculate_vwap
+    from backend.indicators.vwap import utc_day_key
     from backend.indicators.atr import calculate_atr
     from backend.indicators.ema import calculate_ema
 except ImportError:
@@ -16,7 +16,7 @@ except ImportError:
     from services.backtest_service import BacktestService
     from indicators.rsi import calculate_rsi_series
     from indicators.macd import calculate_macd
-    from indicators.vwap import calculate_vwap
+    from indicators.vwap import utc_day_key
     from indicators.atr import calculate_atr
     from indicators.ema import calculate_ema
 
@@ -77,6 +77,11 @@ class AdvancedStrategyBacktestService:
         ema_fast = cls._ema_series(closes, 9)
         ema_slow = cls._ema_series(closes, 21)
         ema_trend = cls._ema_series(closes, 50)
+        ema_trend_slope = [None] * len(ema_trend)
+        for index in range(5, len(ema_trend)):
+            previous = ema_trend[index - 5]
+            if previous:
+                ema_trend_slope[index] = (ema_trend[index] - previous) / previous
         rsi = calculate_rsi_series(closes, 14)
 
         macd_fast = cls._ema_series(closes, 12)
@@ -86,9 +91,15 @@ class AdvancedStrategyBacktestService:
         macd_histogram = [line - signal for line, signal in zip(macd_line, macd_signal)]
 
         vwap = []
+        current_utc_day = None
         cumulative_pv = 0.0
         cumulative_volume = 0.0
         for candle in candles:
+            candle_day = utc_day_key(candle["time"])
+            if candle_day != current_utc_day:
+                current_utc_day = candle_day
+                cumulative_pv = 0.0
+                cumulative_volume = 0.0
             volume = candle["volume"]
             typical = (candle["high"] + candle["low"] + candle["close"]) / 3.0
             cumulative_pv += typical * volume
@@ -99,6 +110,7 @@ class AdvancedStrategyBacktestService:
             "ema_fast": ema_fast,
             "ema_slow": ema_slow,
             "ema_trend": ema_trend,
+            "ema_trend_slope": ema_trend_slope,
             "rsi": rsi,
             "macd_histogram": macd_histogram,
             "vwap": vwap,
@@ -170,10 +182,11 @@ class AdvancedStrategyBacktestService:
                 index += 1
                 continue
             signal = self.strategy.evaluate(
-                candles=candles[max(0, index - 5):index + 1],
+                candles=candles[max(0, index - 19):index + 1],
                 ema_fast=indicators["ema_fast"][index],
                 ema_slow=indicators["ema_slow"][index],
                 ema_trend=indicators["ema_trend"][index],
+                ema_trend_slope=indicators["ema_trend_slope"][index],
                 rsi=rsi,
                 macd={"histogram": indicators["macd_histogram"][index]},
                 vwap=indicators["vwap"][index],
@@ -188,18 +201,29 @@ class AdvancedStrategyBacktestService:
             next_candle = candles[entry_index]
             raw_entry = next_candle["open"]
             entry = raw_entry * (1 + self.slippage_rate if direction == "LONG" else 1 - self.slippage_rate)
-            stop = float(signal["stop_loss"])
-            target_1 = float(signal["take_profit_1"])
-            target_2 = float(signal["take_profit_2"])
+            signal_entry = float(signal.get("entry", candles[index]["close"]))
+            signal_stop = float(signal["stop_loss"])
+            risk_distance = abs(signal_entry - signal_stop)
+            risk_reward = float(signal.get("risk_reward", 2.0))
             if (
-                not all(math.isfinite(value) and value > 0 for value in (entry, stop, target_1, target_2))
-                or (direction == "LONG" and not stop < entry < target_1 < target_2)
-                or (direction == "SHORT" and not target_2 < target_1 < entry < stop)
+                not all(math.isfinite(value) and value > 0 for value in (entry, signal_entry, signal_stop, risk_distance, risk_reward))
+                or risk_distance <= 0 or risk_reward <= 0
             ):
                 skipped_signals += 1
                 index += 1
                 continue
-
+            if direction == "LONG":
+                stop = entry - risk_distance
+                target_1 = entry + risk_distance
+                target_2 = entry + risk_distance * risk_reward
+            else:
+                stop = entry + risk_distance
+                target_1 = entry - risk_distance
+                target_2 = entry - risk_distance * risk_reward
+            if min(stop, target_1, target_2) <= 0:
+                skipped_signals += 1
+                index += 1
+                continue
             stop_fill = stop * (1 - self.slippage_rate if direction == "LONG" else 1 + self.slippage_rate)
             unit_loss = abs(entry - stop_fill) + entry * self.fee_rate + stop_fill * self.fee_rate
             if not math.isfinite(unit_loss) or unit_loss <= 0 or balance <= 0:
@@ -216,28 +240,129 @@ class AdvancedStrategyBacktestService:
                 skipped_signals += 1
                 index += 1
                 continue
+            if math.floor(quantity * 0.5 * 100_000_000) / 100_000_000 <= 0:
+                skipped_signals += 1
+                index += 1
+                continue
 
             entry_fee = quantity * entry * self.fee_rate
             liquidation = (
                 BacktestService._short_liquidation_price(entry, self.fee_rate, 0.25)
                 if direction == "SHORT" else None
             )
+            partial_quantity = 0.0
+            partial_exit_price = None
+            partial_exit_fee = 0.0
+            partial_gross_pnl = 0.0
+            partial_net_pnl = 0.0
+            partial_entry_fee = 0.0
+            remaining_quantity = quantity
+            remaining_entry_fee = entry_fee
+            tp1_hit = False
             exit_price = None
             exit_reason = None
             exit_index = None
+
             for candle_index in range(entry_index, end_index + 1):
                 candle = candles[candle_index]
-                exit_price, exit_reason = BacktestService._resolve_candle_exit(
-                    direction, candle, stop, target_2, self.slippage_rate, liquidation,
-                )
+                open_price = candle["open"]
+
+                if not tp1_hit:
+                    if direction == "LONG":
+                        risk_exit = (
+                            open_price <= stop
+                            or candle["low"] <= stop
+                        )
+                        tp1_touched = candle["high"] >= target_1
+                        # If stop and TP1 share one OHLC candle, stop wins.
+                        if risk_exit:
+                            fill_quote = open_price if open_price <= stop else stop
+                            exit_price = fill_quote * (1 - self.slippage_rate)
+                            exit_reason = "stop_loss"
+                        elif tp1_touched:
+                            tp1_hit = True
+                    else:
+                        risk_exit_level = min(stop, liquidation) if liquidation is not None else stop
+                        risk_exit_reason = (
+                            "liquidation"
+                            if liquidation is not None and liquidation < stop
+                            else "stop_loss"
+                        )
+                        risk_exit = (
+                            open_price >= risk_exit_level
+                            or candle["high"] >= risk_exit_level
+                        )
+                        tp1_touched = candle["low"] <= target_1
+                        if risk_exit:
+                            fill_quote = open_price if open_price >= risk_exit_level else risk_exit_level
+                            exit_price = fill_quote * (1 + self.slippage_rate)
+                            exit_reason = risk_exit_reason
+                        elif tp1_touched:
+                            tp1_hit = True
+                else:
+                    if direction == "LONG":
+                        if open_price <= entry:
+                            exit_price = open_price * (1 - self.slippage_rate)
+                            exit_reason = "breakeven_stop"
+                        elif candle["low"] <= entry:
+                            exit_price = entry * (1 - self.slippage_rate)
+                            exit_reason = "breakeven_stop"
+                        elif candle["high"] >= target_2:
+                            exit_price = target_2 * (1 - self.slippage_rate)
+                            exit_reason = "take_profit_2"
+                    else:
+                        if open_price >= entry:
+                            exit_price = open_price * (1 + self.slippage_rate)
+                            exit_reason = "breakeven_stop"
+                        elif candle["high"] >= entry:
+                            exit_price = entry * (1 + self.slippage_rate)
+                            exit_reason = "breakeven_stop"
+                        elif candle["low"] <= target_2:
+                            exit_price = target_2 * (1 + self.slippage_rate)
+                            exit_reason = "take_profit_2"
+
+                if tp1_hit and partial_quantity == 0.0:
+                    partial_quantity = math.floor(quantity * 0.5 * 100_000_000) / 100_000_000
+                    remaining_quantity = quantity - partial_quantity
+                    partial_exit_price = target_1 * (
+                        1 - self.slippage_rate if direction == "LONG" else 1 + self.slippage_rate
+                    )
+                    partial_entry_fee = entry_fee * (partial_quantity / quantity)
+                    partial_exit_fee = partial_quantity * partial_exit_price * self.fee_rate
+                    partial_gross_pnl = partial_quantity * (
+                        partial_exit_price - entry
+                        if direction == "LONG" else entry - partial_exit_price
+                    )
+                    partial_net_pnl = partial_gross_pnl - partial_entry_fee - partial_exit_fee
+                    remaining_entry_fee = entry_fee - partial_entry_fee
+                    balance += partial_net_pnl
+
+                    # Intrabar ordering is unknowable. If the candle's adverse
+                    # extreme moves beyond its opening quote after TP1 is
+                    # possible, conservatively assume the break-even stop.
+                    if direction == "LONG":
+                        if candle["low"] < open_price:
+                            exit_price = min(open_price, entry) * (1 - self.slippage_rate)
+                            exit_reason = "breakeven_stop"
+                        elif candle["high"] >= target_2:
+                            exit_price = target_2 * (1 - self.slippage_rate)
+                            exit_reason = "take_profit_2"
+                    else:
+                        if candle["high"] > open_price:
+                            exit_price = max(open_price, entry) * (1 + self.slippage_rate)
+                            exit_reason = "breakeven_stop"
+                        elif candle["low"] <= target_2:
+                            exit_price = target_2 * (1 + self.slippage_rate)
+                            exit_reason = "take_profit_2"
+
                 mark_price = exit_price if exit_reason else (
                     candle["low"] if direction == "LONG" else candle["high"]
                 )
-                unrealized = quantity * (
+                unrealized = remaining_quantity * (
                     mark_price - entry if direction == "LONG" else entry - mark_price
                 )
-                estimated_exit_fee = quantity * mark_price * self.fee_rate
-                equity = balance + unrealized - entry_fee - estimated_exit_fee
+                estimated_exit_fee = remaining_quantity * mark_price * self.fee_rate
+                equity = balance + unrealized - remaining_entry_fee - estimated_exit_fee
                 peak_equity = max(peak_equity, equity)
                 if peak_equity > 0:
                     max_drawdown = max(max_drawdown, (peak_equity - equity) / peak_equity)
@@ -248,15 +373,20 @@ class AdvancedStrategyBacktestService:
             if exit_price is None:
                 exit_index = end_index
                 close = candles[end_index]["close"]
-                exit_price = close * (1 - self.slippage_rate if direction == "LONG" else 1 + self.slippage_rate)
+                exit_price = close * (
+                    1 - self.slippage_rate if direction == "LONG" else 1 + self.slippage_rate
+                )
                 exit_reason = "end_of_data"
 
-            gross_pnl = quantity * (
+            remaining_exit_fee = remaining_quantity * exit_price * self.fee_rate
+            remaining_gross_pnl = remaining_quantity * (
                 exit_price - entry if direction == "LONG" else entry - exit_price
             )
-            exit_fee = quantity * exit_price * self.fee_rate
-            net_pnl = gross_pnl - entry_fee - exit_fee
-            balance += net_pnl
+            remaining_net_pnl = remaining_gross_pnl - remaining_entry_fee - remaining_exit_fee
+            balance += remaining_net_pnl
+            gross_pnl = partial_gross_pnl + remaining_gross_pnl
+            exit_fee = partial_exit_fee + remaining_exit_fee
+            net_pnl = partial_net_pnl + remaining_net_pnl
             peak_equity = max(peak_equity, balance)
             if peak_equity > 0:
                 max_drawdown = max(max_drawdown, (peak_equity - balance) / peak_equity)
@@ -267,12 +397,20 @@ class AdvancedStrategyBacktestService:
                 "signal_time": candles[index]["time"],
                 "entry_time": candles[entry_index]["time"],
                 "exit_time": candles[exit_index]["time"],
+                "signal_entry": round(signal_entry, 8),
                 "entry": round(entry, 8),
                 "exit": round(exit_price, 8),
                 "stop_loss": round(stop, 8),
                 "take_profit_1": round(target_1, 8),
                 "take_profit_2": round(target_2, 8),
                 "quantity": round(quantity, 8),
+                "tp1_hit": tp1_hit,
+                "tp1_partial_quantity": round(partial_quantity, 8),
+                "tp1_exit": round(partial_exit_price, 8) if partial_exit_price is not None else None,
+                "tp1_exit_fee": round(partial_exit_fee, 8),
+                "tp1_net_pnl": round(partial_net_pnl, 8),
+                "remaining_quantity": round(remaining_quantity, 8),
+                "stop_after_tp1": round(entry, 8) if tp1_hit else None,
                 "entry_fee": round(entry_fee, 8),
                 "exit_fee": round(exit_fee, 8),
                 "gross_pnl": round(gross_pnl, 8),
@@ -303,6 +441,7 @@ class AdvancedStrategyBacktestService:
             "fee_rate": self.fee_rate,
             "slippage_rate": self.slippage_rate,
             "risk_per_trade": self.risk_per_trade,
-            "take_profit_model": "full_exit_at_tp2_no_partial_tp1",
+            "total_fees": round(sum(trade["entry_fee"] + trade["exit_fee"] for trade in trades), 8),
+            "take_profit_model": "half_exit_at_1r_then_break_even_and_tp2",
             "trades": trades,
         }
