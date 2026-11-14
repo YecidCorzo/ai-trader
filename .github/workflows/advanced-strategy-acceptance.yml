@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - "research/acceptance-run-*"
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
