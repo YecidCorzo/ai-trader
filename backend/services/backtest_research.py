@@ -309,6 +309,13 @@ def run_walk_forward_backtests(
         "initial_balance_per_fold": round(initial_balance, 6),
         "aggregation": "sum_of_independent_fold_pnl; not compounded",
         "total_trades": trade_count,
+        "tp1_hits": tp1_hits,
+        "tp2_hits": tp2_hits,
+        "tp2_hit_rate_percent": round(tp2_hits / trade_count * 100, 4) if trade_count else 0.0,
+        "tp2_hit_rate_after_tp1_percent": round(tp2_hits / tp1_hits * 100, 4) if tp1_hits else 0.0,
+        "average_mfe_r": round(average_mfe_r, 6) if average_mfe_r is not None else None,
+        "average_mae_r": round(average_mae_r, 6) if average_mae_r is not None else None,
+        "average_cost_in_r": round(average_cost_in_r, 6) if average_cost_in_r is not None else None,
         "net_pnl": round(total_net_pnl, 6),
         "average_trade_expectancy": round(total_net_pnl / trade_count, 6)
         if trade_count else None,
@@ -398,6 +405,13 @@ def run_advanced_strategy_walk_forward_backtests(
             "test_range": split["test_range"],
             "test_candles": test_size,
             "trade_count": result["total_trades"],
+            "tp1_hits": result["tp1_hits"],
+            "tp2_hits": result["tp2_hits"],
+            "tp2_hit_rate_percent": result["tp2_hit_rate_percent"],
+            "tp2_hit_rate_after_tp1_percent": result["tp2_hit_rate_after_tp1_percent"],
+            "average_mfe_r": result["average_mfe_r"],
+            "average_mae_r": result["average_mae_r"],
+            "average_cost_in_r": result["average_cost_in_r"],
             "net_pnl": result["net_profit"],
             "expectancy_per_trade": result["expectancy_per_trade"],
             "return_percent": result["return_percent"],
@@ -414,6 +428,20 @@ def run_advanced_strategy_walk_forward_backtests(
     gross_loss = abs(sum(trade["net_pnl"] for trade in losers))
     total_net_pnl = sum(trade["net_pnl"] for trade in all_trades)
     total_fees = sum(fold["fees"] for fold in folds)
+    tp1_hits = sum(1 for trade in all_trades if trade["tp1_hit"])
+    tp2_hits = sum(1 for trade in all_trades if trade["tp2_hit"])
+    average_mfe_r = (
+        sum(trade["mfe_r"] for trade in all_trades) / trade_count
+        if trade_count else None
+    )
+    average_mae_r = (
+        sum(trade["mae_r"] for trade in all_trades) / trade_count
+        if trade_count else None
+    )
+    average_cost_in_r = (
+        sum(trade["cost_in_r"] for trade in all_trades) / trade_count
+        if trade_count else None
+    )
     average_return = (
         total_net_pnl / (initial_balance * len(folds)) * 100 if folds else 0.0
     )
