@@ -477,7 +477,10 @@ class PaperExecutionService:
     def reconcile_account(self, account_id: str) -> dict:
         """Expose reconciliation and halt PAPER entries if the ledger is inconsistent."""
         try:
-            from backend.services.paper_reconciliation import reconcile_realized_pnl
+            try:
+                from backend.services.paper_reconciliation import reconcile_realized_pnl
+            except ImportError:  # Support `cd backend && import main`.
+                from services.paper_reconciliation import reconcile_realized_pnl
         except ImportError:
             from services.paper_reconciliation import reconcile_realized_pnl
         self._accounts.get_account(account_id)
