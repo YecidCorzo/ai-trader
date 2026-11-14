@@ -8,7 +8,7 @@ position is entered at the next candle's open with adverse slippage.
 ## Model
 
 - Indicator inputs use the same EMA(9/21/50), Wilder RSI(14), MACD(12/26/9),
-  cumulative VWAP and rolling ATR(14) formulas as the live signal endpoint.
+  UTC-day anchored VWAP and rolling ATR(14) formulas as the live signal endpoint.
 - The strategy's ATR stop, TP1 and TP2 are captured at signal time.
 - Risk sizing uses balance × configured risk fraction, per-unit stop loss,
   entry/estimated exit fees and adverse slippage, then caps notional by cash.
@@ -30,10 +30,18 @@ position is entered at the next candle's open with adverse slippage.
   Aggregate and walk-forward reports include TP2 hit rate (all trades and
   conditional on TP1), average MFE/MAE and average cost in R.
 
+## VWAP definition
+
+VWAP is anchored to the UTC calendar day of the final candle supplied to the
+indicator. Only candles from that same UTC day contribute; earlier days are
+excluded. Each candle uses typical price `(high + low + close) / 3` weighted
+by volume. Candles must carry an epoch or timezone-aware timestamp. If the
+selected UTC day has no positive total volume, VWAP is unavailable and the
+strategy fails closed.
+
 ## Limitations
 
 This is a historical simulation, not a prediction or profitability claim.
 The model uses OHLC bars and cannot reconstruct intrabar tick ordering. The
-current VWAP input is cumulative from the start of the supplied history; UTC
-daily anchoring is a separate follow-up item. No live or exchange DEMO orders
-are placed.
+VWAP anchor is UTC midnight, not a user-local timezone or exchange session.
+No live or exchange DEMO orders are placed.
