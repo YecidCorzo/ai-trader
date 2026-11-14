@@ -66,6 +66,13 @@ class AdvancedStrategyWalkForwardTests(unittest.TestCase):
         self.assertEqual(trade["entry_time"], 60)
         self.assertGreaterEqual(trade["entry_time"], result["folds"][0]["test_range"][0])
         self.assertEqual(trade["exit_time"], 61)
+        self.assertTrue(trade["tp2_hit"])
+        self.assertIn("mfe_r", trade)
+        self.assertIn("mae_r", trade)
+        self.assertIn("cost_in_r", trade)
+        self.assertEqual(result["tp2_hits"], 1)
+        self.assertEqual(result["tp2_hit_rate_percent"], 100.0)
+        self.assertEqual(result["folds"][0]["tp2_hit_rate_percent"], 100.0)
 
     def test_insufficient_indicator_warmup_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "50 velas"):
