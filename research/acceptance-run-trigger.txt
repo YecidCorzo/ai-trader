@@ -1,0 +1,1 @@
+Trigger commit for the frozen SOLUSDT 1h real-history acceptance. This file is temporary research-run metadata and is not intended to be merged.
