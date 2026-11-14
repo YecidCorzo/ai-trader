@@ -149,7 +149,7 @@ def get_signal():
 
 @app.get("/api/signal/multi-timeframe")
 def get_multi_timeframe_signal():
-    """Return 5m/15m/1h closed-candle signals and strict directional consensus."""
+    """Return 1h/4h closed-candle signals and strict directional consensus."""
     try:
         service = MultiTimeframeAnalysisService(market_service, limit=500)
         return service.run()
@@ -161,7 +161,7 @@ def get_signal_v2():
     try:
         # Obtener velas de Binance
         raw_candles = market_service.get_candles(
-            interval="5m",
+            interval="1h",
             limit=5000,
             closed_only=True,
         )
@@ -295,7 +295,7 @@ def run_backtest(
 @app.get("/api/backtest/advanced")
 def run_advanced_backtest(
     limit: int = Query(5000, ge=100, le=100000),
-    interval: str = Query("5m"),
+    interval: str = Query("1h"),
 ):
     """Backtest the same AdvancedStrategy.evaluate logic used by /api/signal/v2."""
     allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
