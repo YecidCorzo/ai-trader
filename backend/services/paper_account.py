@@ -7,8 +7,12 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from uuid import uuid4
 
-from backend.security.principal import VerifiedPrincipal
-from backend.services.paper_price import BinancePublicPriceProvider, PriceQuote
+try:
+    from backend.security.principal import VerifiedPrincipal
+    from backend.services.paper_price import BinancePublicPriceProvider, PriceQuote
+except ImportError:  # Support `cd backend && import main`.
+    from security.principal import VerifiedPrincipal
+    from services.paper_price import BinancePublicPriceProvider, PriceQuote
 
 
 MONEY_QUANTUM = Decimal("0.00000001")

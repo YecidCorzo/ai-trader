@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from backend.security.principal import VerifiedPrincipal
+try:
+    from backend.security.principal import VerifiedPrincipal
+except ImportError:  # Support `cd backend && import main`.
+    from security.principal import VerifiedPrincipal
 
 
 class PaperResourceNotFoundError(LookupError):
