@@ -155,7 +155,7 @@ def _score_groups(trades):
     result = {}
     for label, items in buckets.items():
         if items:
-            result[label] = _group_metrics(items, "direction") if False else {
+            result[label] = {
                 "trade_count": len(items),
                 "net_pnl": round(sum(float(item["net_pnl"]) for item in items), 6),
                 "expectancy_per_trade": round(
