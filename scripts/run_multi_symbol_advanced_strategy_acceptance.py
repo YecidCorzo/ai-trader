@@ -76,6 +76,7 @@ def aggregate_symbol_results(symbol_runs, candles_by_symbol):
                 "max_fold_drawdown_percent", "total_fees", "average_cost_in_r"
             )
         }
+        symbol_tagged_trades = []
         for fold in folds:
             number = int(fold["fold"])
             start, end = fold["test_range"]
@@ -89,7 +90,8 @@ def aggregate_symbol_results(symbol_runs, candles_by_symbol):
             if len(matching) != int(fold["trade_count"]):
                 raise ValueError(f"{symbol} fold {number}: trade attribution mismatch")
             by_fold[number].extend(matching)
-        all_trades.extend(dict(t, symbol=symbol) for t in trades)
+            symbol_tagged_trades.extend(matching)
+        all_trades.extend(symbol_tagged_trades)
 
     pooled_folds = []
     for number in range(1, nfolds + 1):
