@@ -1,5 +1,5 @@
 import unittest
-from scripts.run_multi_symbol_advanced_strategy_acceptance import CONFIG, aggregate_symbol_results
+from scripts.run_multi_symbol_advanced_strategy_acceptance import (\n    CONFIG, aggregate_symbol_results, histories_are_aligned,\n)
 
 
 class MultiSymbolAcceptanceTests(unittest.TestCase):
@@ -30,6 +30,17 @@ class MultiSymbolAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["net_pnl"], len(CONFIG["symbols"]) * 40.0)
         self.assertEqual([f["trade_count"] for f in result["folds"]], [len(CONFIG["symbols"])] * 4)
         self.assertIn("not a portfolio equity curve", result["aggregation"])
+
+    def test_requires_identical_contiguous_hourly_timestamps(self):
+        candles = [[i * 3600000, "1", "1", "1", "1", "1"] for i in range(10000)]
+        aligned = {symbol: candles for symbol in CONFIG["symbols"]}
+        self.assertTrue(histories_are_aligned(aligned))
+        broken = dict(aligned)
+        broken[CONFIG["symbols"][0]] = candles[:-1] + [[9999 * 3600000 + 1, "1", "1", "1", "1", "1"]]
+        self.assertFalse(histories_are_aligned(broken))
+        missing_pair = dict(aligned)
+        missing_pair.pop(CONFIG["symbols"][-1])
+        self.assertFalse(histories_are_aligned(missing_pair))
 
     def test_rejects_changed_symbol_universe(self):
         with self.assertRaises(ValueError):
