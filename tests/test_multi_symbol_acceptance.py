@@ -17,7 +17,8 @@ class MultiSymbolAcceptanceTests(unittest.TestCase):
                     trades.append({"entry_time": (start + offset) * 3600000,
                                    "net_pnl": 10.0, "cost_in_r": 0.1})
                 folds.append({"fold": fold, "test_range": [start, start + 1000],
-                              "trade_count": trades_per_fold, "max_drawdown_percent": 2.0})
+                              "trade_count": trades_per_fold, "net_pnl": 10.0 * trades_per_fold,
+                              "max_drawdown_percent": 2.0})
             runs[symbol] = {"folds": folds, "trades": trades,
                             "total_trades": len(trades), "net_pnl": 40.0 * trades_per_fold,
                             "expectancy_per_trade": 10.0, "profit_factor": None,
@@ -70,6 +71,20 @@ class MultiSymbolAcceptanceTests(unittest.TestCase):
         symbol = CONFIG["symbols"][0]
         runs[symbol]["folds"][3]["fold"] = 1
         with self.assertRaisesRegex(ValueError, "invalid or duplicate fold number"):
+            aggregate_symbol_results(runs, candles)
+
+    def test_rejects_fold_pnl_that_does_not_match_trade_ledger(self):
+        runs, candles = self._fixture()
+        symbol = CONFIG["symbols"][0]
+        runs[symbol]["folds"][0]["net_pnl"] += 500.0
+        with self.assertRaisesRegex(ValueError, "ledger PnL does not reconcile"):
+            aggregate_symbol_results(runs, candles)
+
+    def test_rejects_symbol_pnl_that_does_not_match_trade_ledger(self):
+        runs, candles = self._fixture()
+        symbol = CONFIG["symbols"][0]
+        runs[symbol]["net_pnl"] += 500.0
+        with self.assertRaisesRegex(ValueError, "symbol ledger PnL does not reconcile"):
             aggregate_symbol_results(runs, candles)
 
 
