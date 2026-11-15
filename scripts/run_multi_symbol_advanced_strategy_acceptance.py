@@ -175,24 +175,31 @@ def main():
             report["data_errors"].append(
                 "Symbol histories are not identical, uninterrupted hourly timestamp sequences"
             )
+    scored = False
     if complete and report["timestamp_alignment_passed"]:
-        strategy = AdvancedStrategy(**CONFIG["strategy"])
-        kwargs = {
-            "initial_balance": CONFIG["initial_balance_per_symbol_fold"],
-            "fee_rate": CONFIG["fee_rate"], "slippage_rate": CONFIG["slippage_rate"],
-            "risk_per_trade": CONFIG["risk_per_trade"], "strategy": strategy,
-        }
-        runs = {
-            symbol: run_advanced_strategy_walk_forward_backtests(
-                candles_by_symbol[symbol], train_size=CONFIG["train_size"],
-                validation_size=CONFIG["validation_size"], test_size=CONFIG["test_size"],
-                step_size=CONFIG["step_size"], backtest_kwargs=kwargs,
-            ) for symbol in CONFIG["symbols"]
-        }
-        walk = aggregate_symbol_results(runs, candles_by_symbol)
-        report["walk_forward"] = walk
-        report["decision"] = evaluate_advanced_strategy_go_no_go(walk)
-    else:
+        try:
+            strategy = AdvancedStrategy(**CONFIG["strategy"])
+            kwargs = {
+                "initial_balance": CONFIG["initial_balance_per_symbol_fold"],
+                "fee_rate": CONFIG["fee_rate"], "slippage_rate": CONFIG["slippage_rate"],
+                "risk_per_trade": CONFIG["risk_per_trade"], "strategy": strategy,
+            }
+            runs = {
+                symbol: run_advanced_strategy_walk_forward_backtests(
+                    candles_by_symbol[symbol], train_size=CONFIG["train_size"],
+                    validation_size=CONFIG["validation_size"], test_size=CONFIG["test_size"],
+                    step_size=CONFIG["step_size"], backtest_kwargs=kwargs,
+                ) for symbol in CONFIG["symbols"]
+            }
+            walk = aggregate_symbol_results(runs, candles_by_symbol)
+            report["walk_forward"] = walk
+            report["decision"] = evaluate_advanced_strategy_go_no_go(walk)
+            scored = True
+        except Exception as error:
+            report["data_errors"].append(
+                f"Scoring/aggregation failed closed: {type(error).__name__}: {error}"
+            )
+    if not scored:
         blocked = {
             "framework": "fixed_parameter_multi_symbol_chronological_walk_forward",
             "strategy": "AdvancedStrategy", "mode": "paper",
