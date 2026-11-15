@@ -248,7 +248,7 @@
         "Motivos:",
         ...(reasons.length ? reasons.map(reason => "• " + reason) : ["• Sin motivos devueltos"]),
         "Modo: PAPER · Esta consulta no abre ni cierra operaciones."
-      ].join("\\n");
+      ].join("\n");
       status.textContent = "Análisis actualizado · SOL/USDT · Solo lectura · PAPER";
     } catch (error) {
       output.textContent = "Análisis no disponible: " + error.message;
