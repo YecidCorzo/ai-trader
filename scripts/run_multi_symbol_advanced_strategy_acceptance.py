@@ -32,6 +32,25 @@ CONFIG = {
 HOUR_MS = 3_600_000
 
 
+def histories_are_aligned(candles_by_symbol):
+    """Require the exact same uninterrupted hourly timestamp sequence per pair."""
+    if set(candles_by_symbol) != set(CONFIG["symbols"]):
+        return False
+    reference = None
+    for symbol in CONFIG["symbols"]:
+        candles = candles_by_symbol[symbol]
+        if len(candles) != CONFIG["limit"]:
+            return False
+        timestamps = [int(row[0]) for row in candles]
+        if any(right - left != HOUR_MS for left, right in zip(timestamps, timestamps[1:])):
+            return False
+        if reference is None:
+            reference = timestamps
+        elif timestamps != reference:
+            return False
+    return True
+
+
 def _pf(trades):
     wins = sum(float(t["net_pnl"]) for t in trades if float(t["net_pnl"]) > 0)
     losses = abs(sum(float(t["net_pnl"]) for t in trades if float(t["net_pnl"]) < 0))
@@ -149,11 +168,11 @@ def main():
     )
     report["history_complete"] = complete
     if complete:
-        starts = {v["history_start"] for v in report["symbol_history"].values()}
-        ends = {v["history_end"] for v in report["symbol_history"].values()}
-        report["timestamp_alignment_passed"] = len(starts) == 1 and len(ends) == 1
+        report["timestamp_alignment_passed"] = histories_are_aligned(candles_by_symbol)
         if not report["timestamp_alignment_passed"]:
-            report["data_errors"].append("Symbol histories do not share identical start/end timestamps")
+            report["data_errors"].append(
+                "Symbol histories are not identical, uninterrupted hourly timestamp sequences"
+            )
     if complete and report["timestamp_alignment_passed"]:
         strategy = AdvancedStrategy(**CONFIG["strategy"])
         kwargs = {
