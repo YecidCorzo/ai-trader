@@ -119,8 +119,7 @@
       <h2>SOL / USDT <span class="muted">· Gráfico</span></h2>
      <div id="candles-chart" style="width:100%; height: 420px; padding-bottom: 20px; box-sizing: border-box;"></div>        
       <div class="actions">
-        <button class="long" onclick="signal('LONG')">Prueba visual LONG</button>
-        <button class="short" onclick="signal('SHORT')">Prueba visual SHORT</button>
+        <button class="backtest-run" id="refresh-signal" type="button" onclick="loadSignal()">Consultar análisis técnico</button>
       </div>
       <div id="signal-box" class="signal-box">Señal: Cargando...
       </div>
@@ -186,7 +185,7 @@
 
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/api/dashboard"
+        "/api/dashboard"
       );
 
       if (!response.ok) {
@@ -221,19 +220,13 @@
     }
   }
 
-    function signal(direction) {
-    document.getElementById("status").textContent =
-      "Señal de prueba: " + direction +
-      ". No se ha enviado ninguna orden al exchange.";
-  }
-
 async function loadPrice() {
   const priceElement = document.getElementById("live-price");
   priceElement.textContent= "Consultando Binance";
 
   try {
     const response = await fetch(
-      "http://127.0.0.1:8000/api/price"
+      "/api/price"
     );
 
     const data = await response.json();
@@ -471,10 +464,18 @@ loadCandles();
 setInterval(loadCandles, 60000);
 async function loadSignal() {
   const signalBox = document.getElementById("signal-box");
+  const button = document.getElementById("refresh-signal");
+  const status = document.getElementById("status");
   const formatPrice = value =>
     value == null || value === "" || !Number.isFinite(Number(value))
       ? "N/D"
       : Number(value).toFixed(4);
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Analizando mercado…";
+  }
+  signalBox.textContent = "Consultando velas cerradas y calculando indicadores…";
 
   try {
     const response = await fetch("/api/signal/v2");
@@ -484,13 +485,17 @@ async function loadSignal() {
       throw new Error(data.detail || "Señal no disponible");
     }
 
+    const invalidation = data.invalidation?.price;
+    const regime = data.regime_filters || {};
     const lines = [
-      "Señal: " + data.signal,
+      "Señal: " + String(data.signal).toUpperCase(),
       "Puntuación de reglas: " + (data.score ?? "N/D") + "/100 (no es probabilidad)",
-      "Entrada de referencia: " + formatPrice(data.entry),
-      "Stop simulado: " + formatPrice(data.stop_loss),
-      "Take profit 1: " + formatPrice(data.take_profit_1),
-      "Take profit 2: " + formatPrice(data.take_profit_2),
+      "Entrada de referencia: " + formatPrice(data.entry) + " USDT",
+      "Stop Loss: " + formatPrice(data.stop_loss) + " USDT",
+      "Take Profit 1: " + formatPrice(data.take_profit_1) + " USDT",
+      "Take Profit 2: " + formatPrice(data.take_profit_2) + " USDT",
+      "Invalidación: " + formatPrice(invalidation) + " USDT",
+      "Coste estimado: " + (regime.cost_in_r == null ? "N/D" : Number(regime.cost_in_r).toFixed(3) + "R"),
       "Relación riesgo/beneficio objetivo: " + (data.risk_reward ?? "N/D")
     ];
 
@@ -498,12 +503,18 @@ async function loadSignal() {
       lines.push("Razones: " + data.reasons.join("; "));
     }
 
-    lines.push("Análisis PAPER; no se ha enviado ninguna orden.");
+    lines.push("Análisis PAPER de solo lectura; no se ha enviado ninguna orden.");
     signalBox.textContent = lines.join("\n");
-
+    if (status) status.textContent = "Análisis actualizado · SOL/USDT · Solo lectura · PAPER";
   } catch (error) {
     console.error("Error cargando señal avanzada:", error);
     signalBox.textContent = "Análisis no disponible: " + error.message;
+    if (status) status.textContent = "No se pudo actualizar el análisis.";
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Consultar análisis técnico";
+    }
   }
 }
 
