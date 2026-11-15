@@ -220,47 +220,6 @@
     }
   }
 
-    async function loadSignal() {
-    const output = document.getElementById("signal-box");
-    const button = document.getElementById("refresh-signal");
-    const status = document.getElementById("status");
-    if (button) {
-      button.disabled = true;
-      button.textContent = "Analizando mercado…";
-    }
-    output.textContent = "Consultando velas cerradas y calculando indicadores…";
-    try {
-      const response = await fetch("/api/signal/v2");
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || "Error de análisis: " + response.status);
-      }
-      const price = value => value == null ? "N/D" : Number(value).toFixed(4);
-      const reasons = Array.isArray(data.reasons) ? data.reasons : [];
-      output.textContent = [
-        "SEÑAL: " + String(data.signal || "NEUTRAL").toUpperCase(),
-        "Puntuación: " + (data.score ?? "N/D") + "/100",
-        "Entrada de referencia: " + price(data.entry) + " USDT",
-        "Stop Loss: " + price(data.stop_loss),
-        "Take Profit 1: " + price(data.take_profit_1),
-        "Take Profit 2: " + price(data.take_profit_2),
-        "Invalidación: " + (data.invalidation?.price == null ? "N/D" : price(data.invalidation.price) + " USDT"),
-        "Motivos:",
-        ...(reasons.length ? reasons.map(reason => "• " + reason) : ["• Sin motivos devueltos"]),
-        "Modo: PAPER · Esta consulta no abre ni cierra operaciones."
-      ].join("\n");
-      status.textContent = "Análisis actualizado · SOL/USDT · Solo lectura · PAPER";
-    } catch (error) {
-      output.textContent = "Análisis no disponible: " + error.message;
-      status.textContent = "No se pudo actualizar el análisis.";
-    } finally {
-      if (button) {
-        button.disabled = false;
-        button.textContent = "Consultar análisis técnico";
-      }
-    }
-  }
-
 async function loadPrice() {
   const priceElement = document.getElementById("live-price");
   priceElement.textContent= "Consultando Binance";
@@ -407,7 +366,6 @@ document.getElementById("run-walk-forward").addEventListener("click", runWalkFor
 
 loadDashboard();
 loadPrice();
-loadSignal();
 setInterval(loadPrice, 5000);
 
 
@@ -506,10 +464,18 @@ loadCandles();
 setInterval(loadCandles, 60000);
 async function loadSignal() {
   const signalBox = document.getElementById("signal-box");
+  const button = document.getElementById("refresh-signal");
+  const status = document.getElementById("status");
   const formatPrice = value =>
     value == null || value === "" || !Number.isFinite(Number(value))
       ? "N/D"
       : Number(value).toFixed(4);
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Analizando mercado…";
+  }
+  signalBox.textContent = "Consultando velas cerradas y calculando indicadores…";
 
   try {
     const response = await fetch("/api/signal/v2");
@@ -519,13 +485,17 @@ async function loadSignal() {
       throw new Error(data.detail || "Señal no disponible");
     }
 
+    const invalidation = data.invalidation?.price;
+    const regime = data.regime_filters || {};
     const lines = [
-      "Señal: " + data.signal,
+      "Señal: " + String(data.signal).toUpperCase(),
       "Puntuación de reglas: " + (data.score ?? "N/D") + "/100 (no es probabilidad)",
-      "Entrada de referencia: " + formatPrice(data.entry),
-      "Stop simulado: " + formatPrice(data.stop_loss),
-      "Take profit 1: " + formatPrice(data.take_profit_1),
-      "Take profit 2: " + formatPrice(data.take_profit_2),
+      "Entrada de referencia: " + formatPrice(data.entry) + " USDT",
+      "Stop Loss: " + formatPrice(data.stop_loss) + " USDT",
+      "Take Profit 1: " + formatPrice(data.take_profit_1) + " USDT",
+      "Take Profit 2: " + formatPrice(data.take_profit_2) + " USDT",
+      "Invalidación: " + formatPrice(invalidation) + " USDT",
+      "Coste estimado: " + (regime.cost_in_r == null ? "N/D" : Number(regime.cost_in_r).toFixed(3) + "R"),
       "Relación riesgo/beneficio objetivo: " + (data.risk_reward ?? "N/D")
     ];
 
@@ -533,12 +503,18 @@ async function loadSignal() {
       lines.push("Razones: " + data.reasons.join("; "));
     }
 
-    lines.push("Análisis PAPER; no se ha enviado ninguna orden.");
+    lines.push("Análisis PAPER de solo lectura; no se ha enviado ninguna orden.");
     signalBox.textContent = lines.join("\n");
-
+    if (status) status.textContent = "Análisis actualizado · SOL/USDT · Solo lectura · PAPER";
   } catch (error) {
     console.error("Error cargando señal avanzada:", error);
     signalBox.textContent = "Análisis no disponible: " + error.message;
+    if (status) status.textContent = "No se pudo actualizar el análisis.";
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Consultar análisis técnico";
+    }
   }
 }
 
