@@ -70,14 +70,15 @@ def aggregate_symbol_results(symbol_runs, candles_by_symbol):
         raise ValueError("Candle universe differs from the pre-registered symbol set")
     for symbol in CONFIG["symbols"]:
         result, candles = symbol_runs[symbol], candles_by_symbol[symbol]
-        folds, trades = result.get("folds", []), result.get("trades", [])
+        folds, trades = result.get("folds"), result.get("trades")
         total_trades = result.get("total_trades")
         if (
-            len(folds) != nfolds
+            not isinstance(folds, list)
+            or not isinstance(trades, list)
+            or len(folds) != nfolds
             or not isinstance(total_trades, int)
             or isinstance(total_trades, bool)
             or len(trades) != total_trades
-            or not isinstance(trades, list)
         ):
             raise ValueError(f"{symbol}: fold/trade ledger mismatch")
         expected_fold_numbers = set(range(1, nfolds + 1))
@@ -91,7 +92,14 @@ def aggregate_symbol_results(symbol_runs, candles_by_symbol):
                 or number not in expected_fold_numbers or number in folds_by_number
             ):
                 raise ValueError(f"{symbol}: invalid or duplicate fold number")
-            start, end = fold.get("test_range", (None, None))
+            test_range = fold.get("test_range")
+            if (
+                not isinstance(test_range, (list, tuple))
+                or len(test_range) != 2
+                or any(not isinstance(value, int) or isinstance(value, bool) for value in test_range)
+            ):
+                raise ValueError(f"{symbol} fold {number}: malformed OOS test range")
+            start, end = test_range
             expected_start = (
                 CONFIG["train_size"] + CONFIG["validation_size"]
                 + (number - 1) * CONFIG["step_size"]
@@ -127,7 +135,10 @@ def aggregate_symbol_results(symbol_runs, candles_by_symbol):
             for trade_index, trade in enumerate(trades):
                 if not isinstance(trade, dict) or "entry_time" not in trade:
                     raise ValueError(f"{symbol}: malformed trade record")
-                entry_time = int(trade["entry_time"])
+                raw_entry_time = trade["entry_time"]
+                if not isinstance(raw_entry_time, int) or isinstance(raw_entry_time, bool):
+                    raise ValueError(f"{symbol}: invalid trade entry timestamp")
+                entry_time = raw_entry_time
                 if start_ms <= entry_time < end_ms:
                     if trade_index in assigned_trade_indices:
                         raise ValueError(f"{symbol}: trade assigned to multiple folds")
@@ -135,10 +146,32 @@ def aggregate_symbol_results(symbol_runs, candles_by_symbol):
                     matching.append(dict(trade, symbol=symbol, fold=number))
             if len(matching) != fold["trade_count"]:
                 raise ValueError(f"{symbol} fold {number}: trade attribution mismatch")
+            fold_net_pnl = fold.get("net_pnl")
+            try:
+                fold_net_pnl = float(fold_net_pnl)
+                ledger_fold_pnl = sum(float(trade["net_pnl"]) for trade in matching)
+            except (TypeError, ValueError, KeyError) as error:
+                raise ValueError(f"{symbol} fold {number}: invalid PnL reconciliation data") from error
+            if (
+                not math.isfinite(fold_net_pnl)
+                or any(not math.isfinite(float(trade["net_pnl"])) for trade in matching)
+                or not math.isclose(ledger_fold_pnl, fold_net_pnl, rel_tol=0.0, abs_tol=0.011)
+            ):
+                raise ValueError(f"{symbol} fold {number}: ledger PnL does not reconcile")
             by_fold[number].extend(matching)
             symbol_tagged_trades.extend(matching)
         if len(assigned_trade_indices) != len(trades):
             raise ValueError(f"{symbol}: one or more trades fall outside the frozen OOS folds")
+        try:
+            reported_symbol_pnl = float(result["net_pnl"])
+            ledger_symbol_pnl = sum(float(trade["net_pnl"]) for trade in symbol_tagged_trades)
+        except (TypeError, ValueError, KeyError) as error:
+            raise ValueError(f"{symbol}: invalid symbol PnL reconciliation data") from error
+        if (
+            not math.isfinite(reported_symbol_pnl)
+            or not math.isclose(ledger_symbol_pnl, reported_symbol_pnl, rel_tol=0.0, abs_tol=0.011)
+        ):
+            raise ValueError(f"{symbol}: symbol ledger PnL does not reconcile")
         all_trades.extend(symbol_tagged_trades)
 
     pooled_folds = []
