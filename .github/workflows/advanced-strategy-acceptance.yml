@@ -1,4 +1,4 @@
-name: AdvancedStrategy real-history acceptance
+name: AdvancedStrategy multi-symbol real-history acceptance
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   real-history-acceptance:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Check out research commit
         uses: actions/checkout@v4
@@ -22,20 +22,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install pinned dependencies
+      - name: Install pinned development dependencies
         run: python -m pip install -r requirements-dev.txt
 
-      - name: Run pre-registered public-history acceptance
+      - name: Run pre-registered nine-symbol public-history acceptance
         env:
           PYTHONPATH: backend
         run: |
-          python scripts/run_advanced_strategy_acceptance.py \
-            --output artifacts/advanced_strategy_acceptance.json
+          python scripts/run_multi_symbol_advanced_strategy_acceptance.py \
+            --output artifacts/advanced_strategy_acceptance_multi_symbol_v2.json
 
-      - name: Publish complete acceptance report
+      - name: Publish complete acceptance report (including NO_GO)
         uses: actions/upload-artifact@v4
         with:
-          name: advanced-strategy-acceptance-SOLUSDT-1h-${{ github.run_number }}
-          path: artifacts/advanced_strategy_acceptance.json
+          name: advanced-strategy-acceptance-multi-symbol-v2-${{ github.run_number }}
+          path: artifacts/advanced_strategy_acceptance_multi_symbol_v2.json
           if-no-files-found: error
           retention-days: 90
