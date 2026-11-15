@@ -31,7 +31,7 @@ El frontend usa rutas relativas (`/api/...`) para comunicarse con la misma insta
 
 El panel de análisis es de solo lectura. Consultar una señal no abre ni cierra operaciones. El saldo del dashboard general permanece sin configurar porque `/api/dashboard` es un placeholder deliberado.
 
-La API persistente `/api/paper/*` requiere un proveedor OIDC real configurado en el backend y un token Bearer válido. Esta interfaz todavía no implementa inicio de sesión OIDC ni gestión autenticada de cuentas PAPER. Consulta `docs/PAPER_API_OIDC_SETUP.md` para la configuración y las pruebas de aceptación de la API.
+La API persistente `/api/paper/*` requiere un proveedor OIDC real configurado en el backend y un token Bearer válido. Esta interfaz todavía no implementa inicio de sesión OIDC ni gestión autenticada de cuentas PAPER. Consulta `docs/PAPER_API_OIDC_SETUP.md` para la configuración y las pruebas de aceptación de la API. La secuencia completa de aceptación de release está en `docs/PAPER_RELEASE_ACCEPTANCE.md`.
 
 ## Seguridad
 
