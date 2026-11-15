@@ -32,6 +32,7 @@ class MultiSymbolAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["net_pnl"], len(CONFIG["symbols"]) * 40.0)
         self.assertEqual([f["trade_count"] for f in result["folds"]], [len(CONFIG["symbols"])] * 4)
         self.assertIn("not a portfolio equity curve", result["aggregation"])
+        self.assertTrue(all("symbol" in trade and "fold" in trade for trade in result["trades"]))
 
     def test_requires_identical_contiguous_hourly_timestamps(self):
         candles = [[i * 3600000, "1", "1", "1", "1", "1"] for i in range(10000)]
