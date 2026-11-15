@@ -100,8 +100,8 @@ Configure these environment variables in the API runtime:
 - `AI_TRADER_OIDC_JWKS_URL`: HTTPS URL for the issuer's JSON Web Key Set.
 
 The verifier accepts RS256-signed JWTs and validates signature, issuer,
-audience, expiry, issued-at time and subject. The JWKS set is cached by the
-verification client. If the Bearer token is missing or invalid/expired, the API
+audience, expiry, issued-at time and subject using the configured JWKS URL. If
+the Bearer token is missing or invalid/expired, the API
 returns 401. If OIDC is not configured, it returns 503 and fails closed.
 
 This is provider-neutral token verification, not a bundled identity provider
