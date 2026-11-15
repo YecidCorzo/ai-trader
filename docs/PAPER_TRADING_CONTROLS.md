@@ -134,9 +134,9 @@ fill. The close request accepts an optional exit-fee estimate and reason, not
 an exit price. Funding requests are ledger events only; they do not move money
 or connect to a bank or exchange account.
 
-The API responses explicitly report `live_trading_authorized: false`. No
-exchange credentials, live endpoints, real funds or live order-routing
-capabilities are part of this API.
+Account, trade and funding responses include `live_trading_authorized: false`
+where applicable; this is informational, not an authorization mechanism. No
+live endpoints or live order-routing capabilities are part of this API.
 
 The general `/api/dashboard` endpoint remains a static unconfigured placeholder
 and is not linked to the authenticated account. Use
