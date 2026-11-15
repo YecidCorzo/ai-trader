@@ -119,8 +119,7 @@
       <h2>SOL / USDT <span class="muted">· Gráfico</span></h2>
      <div id="candles-chart" style="width:100%; height: 420px; padding-bottom: 20px; box-sizing: border-box;"></div>        
       <div class="actions">
-        <button class="long" onclick="signal('LONG')">Prueba visual LONG</button>
-        <button class="short" onclick="signal('SHORT')">Prueba visual SHORT</button>
+        <button class="backtest-run" id="refresh-signal" type="button" onclick="loadSignal()">Consultar análisis técnico</button>
       </div>
       <div id="signal-box" class="signal-box">Señal: Cargando...
       </div>
@@ -186,7 +185,7 @@
 
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/api/dashboard"
+        "/api/dashboard"
       );
 
       if (!response.ok) {
@@ -221,10 +220,45 @@
     }
   }
 
-    function signal(direction) {
-    document.getElementById("status").textContent =
-      "Señal de prueba: " + direction +
-      ". No se ha enviado ninguna orden al exchange.";
+    async function loadSignal() {
+    const output = document.getElementById("signal-box");
+    const button = document.getElementById("refresh-signal");
+    const status = document.getElementById("status");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Analizando mercado…";
+    }
+    output.textContent = "Consultando velas cerradas y calculando indicadores…";
+    try {
+      const response = await fetch("/api/signal/v2");
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || "Error de análisis: " + response.status);
+      }
+      const price = value => value == null ? "N/D" : Number(value).toFixed(4);
+      const reasons = Array.isArray(data.reasons) ? data.reasons : [];
+      output.textContent = [
+        "SEÑAL: " + String(data.signal || "NEUTRAL").toUpperCase(),
+        "Puntuación: " + (data.score ?? "N/D") + "/100",
+        "Entrada de referencia: " + price(data.entry) + " USDT",
+        "Stop Loss: " + price(data.stop_loss),
+        "Take Profit 1: " + price(data.take_profit_1),
+        "Take Profit 2: " + price(data.take_profit_2),
+        "Invalidación: " + (data.invalidation?.price == null ? "N/D" : price(data.invalidation.price) + " USDT"),
+        "Motivos:",
+        ...(reasons.length ? reasons.map(reason => "• " + reason) : ["• Sin motivos devueltos"]),
+        "Modo: PAPER · Esta consulta no abre ni cierra operaciones."
+      ].join("\\n");
+      status.textContent = "Análisis actualizado · SOL/USDT · Solo lectura · PAPER";
+    } catch (error) {
+      output.textContent = "Análisis no disponible: " + error.message;
+      status.textContent = "No se pudo actualizar el análisis.";
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Consultar análisis técnico";
+      }
+    }
   }
 
 async function loadPrice() {
@@ -233,7 +267,7 @@ async function loadPrice() {
 
   try {
     const response = await fetch(
-      "http://127.0.0.1:8000/api/price"
+      "/api/price"
     );
 
     const data = await response.json();
