@@ -1,15 +1,40 @@
+# AI Trader — frontend
 
-# AI TRADER
+Dashboard web servido por FastAPI en `/dashboard`.
 
-Dashboard de trading con IA.
+## Funciones disponibles
 
-## Funciones previstas
+- Precio público SOL/USDT consultado desde la API del backend.
+- Gráfico de velas SOL/USDT.
+- Consulta de análisis técnico avanzado mediante `GET /api/signal/v2`.
+- Presentación de señal LONG/SHORT/NEUTRAL, puntuación, entrada de referencia, stop loss, take profits, invalidación y motivos.
+- Backtest histórico PAPER y validación walk-forward PAPER.
 
-- Gráfico SOL/USDT
-- Señales LONG y SHORT
-- Gestión de posiciones
-- Panel de riesgo
-- Paper trading
-- Integración con TradingView
-- Alertas de Discord
-- Backtesting de estrategias
+## Ejecutar localmente
+
+Desde la raíz del repositorio, instala las dependencias y arranca el backend:
+
+```sh
+python -m pip install -r requirements.txt
+PYTHONPATH=backend uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Abre:
+
+```
+http://127.0.0.1:8000/dashboard/
+```
+
+El frontend usa rutas relativas (`/api/...`) para comunicarse con la misma instancia de FastAPI. No abras `index.html` directamente con `file://`.
+
+## Límite actual de integración PAPER
+
+El panel de análisis es de solo lectura. Consultar una señal no abre ni cierra operaciones. El saldo del dashboard general permanece sin configurar porque `/api/dashboard` es un placeholder deliberado.
+
+La API persistente `/api/paper/*` requiere un proveedor OIDC real configurado en el backend y un token Bearer válido. Esta interfaz todavía no implementa inicio de sesión OIDC ni gestión autenticada de cuentas PAPER. Consulta `docs/PAPER_API_OIDC_SETUP.md` para la configuración y las pruebas de aceptación de la API.
+
+## Seguridad
+
+- Solo modo PAPER.
+- Sin credenciales de exchange, órdenes reales ni endpoints live.
+- No introduzcas tokens, secretos ni claves privadas en el código del frontend.
