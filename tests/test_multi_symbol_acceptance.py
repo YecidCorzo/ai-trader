@@ -55,6 +55,23 @@ class MultiSymbolAcceptanceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             aggregate_symbol_results(runs, candles)
 
+    def test_rejects_unattributed_trade_outside_oos_folds(self):
+        runs, candles = self._fixture()
+        symbol = CONFIG["symbols"][0]
+        runs[symbol]["trades"].append({
+            "entry_time": 5000 * 3600000, "net_pnl": 999.0, "cost_in_r": 0.1,
+        })
+        runs[symbol]["total_trades"] += 1
+        with self.assertRaisesRegex(ValueError, "outside the frozen OOS folds"):
+            aggregate_symbol_results(runs, candles)
+
+    def test_rejects_duplicate_fold_number(self):
+        runs, candles = self._fixture()
+        symbol = CONFIG["symbols"][0]
+        runs[symbol]["folds"][3]["fold"] = 1
+        with self.assertRaisesRegex(ValueError, "invalid or duplicate fold number"):
+            aggregate_symbol_results(runs, candles)
+
 
 if __name__ == "__main__":
     unittest.main()
