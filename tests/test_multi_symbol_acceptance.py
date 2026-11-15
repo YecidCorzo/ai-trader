@@ -1,5 +1,7 @@
 import unittest
-from scripts.run_multi_symbol_advanced_strategy_acceptance import (\n    CONFIG, aggregate_symbol_results, histories_are_aligned,\n)
+from scripts.run_multi_symbol_advanced_strategy_acceptance import (
+    CONFIG, aggregate_symbol_results, histories_are_aligned,
+)
 
 
 class MultiSymbolAcceptanceTests(unittest.TestCase):
