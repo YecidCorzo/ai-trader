@@ -92,27 +92,27 @@ class EmaRsiSignalHarnessTests(unittest.TestCase):
 
     def test_bullish_alignment_generates_long(self):
         self.assertEqual(
-            self.strategy.generate_signal(ema9=105.0, ema21=100.0, rsi=55.0),
+            self.strategy.generate_signal(ema9=105.0, ema21=100.0, rsi=55.0, prev_ema9=99.0, prev_ema21=100.0),
             "LONG",
         )
 
     def test_bearish_alignment_generates_short(self):
         self.assertEqual(
-            self.strategy.generate_signal(ema9=95.0, ema21=100.0, rsi=45.0),
+            self.strategy.generate_signal(ema9=95.0, ema21=100.0, rsi=45.0, prev_ema9=101.0, prev_ema21=100.0),
             "SHORT",
         )
 
     def test_mixed_or_boundary_alignment_generates_neutral(self):
         self.assertEqual(
-            self.strategy.generate_signal(ema9=105.0, ema21=100.0, rsi=49.9),
+            self.strategy.generate_signal(ema9=105.0, ema21=100.0, rsi=49.9, prev_ema9=99.0, prev_ema21=100.0),
             "NEUTRAL",
         )
         self.assertEqual(
-            self.strategy.generate_signal(ema9=95.0, ema21=100.0, rsi=50.1),
+            self.strategy.generate_signal(ema9=95.0, ema21=100.0, rsi=50.1, prev_ema9=101.0, prev_ema21=100.0),
             "NEUTRAL",
         )
         self.assertEqual(
-            self.strategy.generate_signal(ema9=100.0, ema21=100.0, rsi=50.0),
+            self.strategy.generate_signal(ema9=100.0, ema21=100.0, rsi=50.0, prev_ema9=99.0, prev_ema21=100.0),
             "NEUTRAL",
         )
 
