@@ -10,18 +10,18 @@ FRONTEND_PATH = Path(__file__).resolve().parents[1] / "frontend" / "index.html"
 
 def _inline_scripts(markup):
     scripts = re.findall(
-        r"<script\\b[^>]*>(.*?)</script\\s*>",
+        r"<script\b[^>]*>(.*?)</script\s*>",
         markup,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    return "\\n".join(script for script in scripts if script.strip())
+    return "\n".join(script for script in scripts if script.strip())
 
 
 def _load_signal_body(script):
     match = re.search(
-        r"async\\s+function\\s+loadSignal\\s*\\(\\s*\\)\\s*\\{"
+        r"async\s+function\s+loadSignal\s*\(\s*\)\s*\{"
         r"(.*?)"
-        r"\\n\\}\\s*\\n\\s*loadSignal\\(\\);",
+        r"\n\}\s*\n\s*loadSignal\(\);",
         script,
         flags=re.DOTALL,
     )
@@ -39,36 +39,36 @@ class DashboardReadOnlyIntegrationTests(unittest.TestCase):
     def test_dashboard_has_one_real_signal_refresh_control(self):
         self.assertRegex(
             self.markup,
-            r'<button[^>]*id="refresh-signal"[^>]*onclick="loadSignal\\(\\)"',
+            r'<button[^>]*id="refresh-signal"[^>]*onclick="loadSignal\(\)"',
         )
         self.assertEqual(
-            len(re.findall(r"async\\s+function\\s+loadSignal\\s*\\(", self.script)),
+            len(re.findall(r"async\s+function\s+loadSignal\s*\(", self.script)),
             1,
         )
-        self.assertNotRegex(self.markup, r"onclick\\s*=\\s*['\"]signal\\(")
-        self.assertNotRegex(self.script, r"function\\s+signal\\s*\\(")
+        self.assertNotRegex(self.markup, r"onclick\s*=\s*['\"]signal\(")
+        self.assertNotRegex(self.script, r"function\s+signal\s*\(")
 
     def test_signal_is_loaded_once_and_refreshed_on_a_single_interval(self):
         self.assertEqual(
-            len(re.findall(r"^\\s*loadSignal\\(\\);\\s*$", self.script, re.MULTILINE)),
+            len(re.findall(r"^\s*loadSignal\(\);\s*$", self.script, re.MULTILINE)),
             1,
         )
         self.assertEqual(
-            len(re.findall(r"setInterval\\(\\s*loadSignal\\s*,", self.script)),
+            len(re.findall(r"setInterval\(\s*loadSignal\s*,", self.script)),
             1,
         )
 
     def test_dashboard_api_requests_use_the_current_origin(self):
         self.assertNotRegex(
             self.script,
-            r"https?://(?:127\\.0\\.0\\.1|localhost):\\d+/api/",
+            r"https?://(?:127\.0\.0\.1|localhost):\d+/api/",
         )
         self.assertNotRegex(self.script, r"file://")
 
     def test_signal_panel_uses_only_the_read_only_analysis_endpoint(self):
         body = _load_signal_body(self.script)
         self.assertIn('fetch("/api/signal/v2")', body)
-        self.assertNotRegex(body, r"method\\s*:\\s*['\"]POST['\"]")
+        self.assertNotRegex(body, r"method\s*:\s*['\"]POST['\"]")
         self.assertNotIn("/api/paper/", body)
         self.assertNotIn("/api/orders", body)
         self.assertIn("Análisis PAPER de solo lectura", body)
