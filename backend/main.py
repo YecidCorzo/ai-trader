@@ -150,14 +150,20 @@ def get_signal():
     except ValueError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
-    ema9 = calculate_ema(closes, 9)
-    ema21 = calculate_ema(closes, 21)
+    ema9_series = calculate_ema_series(closes, 9)
+    ema21_series = calculate_ema_series(closes, 21)
+    ema9 = ema9_series[-1]
+    ema21 = ema21_series[-1]
     rsi = calculate_rsi(closes, 14)
 
+    # Compare consecutive closed-candle EMA values so the live endpoint
+    # follows the same crossover rule as BacktestService.
     signal = strategy.generate_signal(
         ema9=ema9,
         ema21=ema21,
-        rsi=rsi
+        rsi=rsi,
+        prev_ema9=ema9_series[-2],
+        prev_ema21=ema21_series[-2],
     )
 
     return {
