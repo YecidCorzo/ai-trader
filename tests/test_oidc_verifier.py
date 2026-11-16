@@ -15,6 +15,7 @@ from backend.security.oidc_verifier import (
     InvalidBearerToken,
     OIDCConfigurationError,
     OIDCJWTVerifier,
+    _get_jwks_client,
 )
 
 
@@ -97,6 +98,36 @@ class OIDCVerifierTests(unittest.TestCase):
         for token in ("", "not-a-jwt", "x" * 16385):
             with self.assertRaises(InvalidBearerToken):
                 verifier.verify(token)
+
+    def test_default_jwks_client_is_reused_for_same_url(self):
+        _get_jwks_client.cache_clear()
+        jwks_url = "https://identity.example.test/.well-known/jwks.json"
+        try:
+            with patch("backend.security.oidc_verifier.PyJWKClient") as client_factory:
+                client_factory.return_value = FakeJwksClient(self.public_key)
+                verifier_a = OIDCJWTVerifier(
+                    issuer="https://identity.example.test/",
+                    audience="ai-trader-paper",
+                    jwks_url=jwks_url,
+                )
+                verifier_b = OIDCJWTVerifier(
+                    issuer="https://identity.example.test/",
+                    audience="ai-trader-paper",
+                    jwks_url=jwks_url,
+                )
+
+                token = self.token()
+                verifier_a.verify(token)
+                verifier_b.verify(token)
+
+                client_factory.assert_called_once_with(
+                    jwks_url,
+                    cache_jwk_set=True,
+                    lifespan=300,
+                    timeout=5,
+                )
+        finally:
+            _get_jwks_client.cache_clear()
 
     def test_missing_oidc_configuration_fails_closed_with_503(self):
         clear_oidc_verifier_cache()

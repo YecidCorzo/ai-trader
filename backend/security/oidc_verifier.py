@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 
 import jwt
 from jwt import PyJWKClient, PyJWKClientError, PyJWTError
@@ -19,6 +20,17 @@ class OIDCConfigurationError(ValueError):
 
 class InvalidBearerToken(ValueError):
     pass
+
+
+@lru_cache(maxsize=8)
+def _get_jwks_client(jwks_url: str) -> PyJWKClient:
+    """Reuse the JWKS cache across requests for the same configured URL."""
+    return PyJWKClient(
+        jwks_url,
+        cache_jwk_set=True,
+        lifespan=300,
+        timeout=5,
+    )
 
 
 @dataclass(frozen=True)
@@ -57,12 +69,7 @@ class OIDCJWTVerifier:
         if not isinstance(token, str) or not token or len(token) > 16384:
             raise InvalidBearerToken("Bearer token inválido")
         try:
-            client = self.jwks_client or PyJWKClient(
-                self.jwks_url,
-                cache_jwk_set=True,
-                lifespan=300,
-                timeout=5,
-            )
+            client = self.jwks_client or _get_jwks_client(self.jwks_url)
             signing_key = client.get_signing_key_from_jwt(token).key
             claims = jwt.decode(
                 token,
