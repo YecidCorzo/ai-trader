@@ -132,3 +132,18 @@ OIDC identity provider, not by Binance.
 - Every PAPER API route requires OIDC identity and account ownership.
 - Reset requires explicit confirmation and is audited.
 - Internal PAPER balances are fictional ledger values, not exchange balances.
+
+## 7. Automated route-level regression
+
+The backend suite includes `tests/test_paper_oidc_route_integration.py`. It
+exercises the actual FastAPI PAPER routes with short-lived RS256 tokens signed
+by an ephemeral test-only key, a deterministic in-process JWKS key resolver,
+and a temporary SQLite database. It verifies the configured authentication
+dependency, missing-token rejection, signature/claim validation, account
+creation/read and cross-owner isolation.
+
+This is a hermetic regression test, **not** a real identity-provider
+acceptance: it does not exercise external OIDC discovery, HTTPS/TLS delivery
+of the provider's JWKS, browser Authorization Code + PKCE, provider sessions
+or revocation. The controlled-provider procedure in
+`docs/PAPER_RELEASE_ACCEPTANCE.md` remains mandatory before release.
