@@ -78,21 +78,51 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
         self.env_patcher.stop()
         self.temp_dir.cleanup()
 
-    def token(self, subject, audience=AUDIENCE):
+    def token(
+        self, subject, audience=AUDIENCE, *, issuer=ISSUER,
+        expires_at=None, signing_key=None, kid=KEY_ID, algorithm="RS256",
+    ):
         now = int(time.time())
         claims = {
-            "iss": ISSUER,
+            "iss": issuer,
             "aud": audience,
             "sub": subject,
             "iat": now,
-            "exp": now + 300,
+            "exp": now + 300 if expires_at is None else expires_at,
         }
+        key = self.private_key if signing_key is None else signing_key
+        encode_key = "" if algorithm == "none" else key
         return jwt.encode(
-            claims,
-            self.private_key,
-            algorithm="RS256",
-            headers={"kid": KEY_ID},
+            claims, encode_key, algorithm=algorithm, headers={"kid": kid},
         )
+
+    def test_paper_routes_reject_adversarial_tokens_with_401_not_500(self):
+        wrong_signing_key = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048,
+        )
+        invalid_tokens = {
+            "wrong-signature-same-kid": self.token(
+                "owner-a", signing_key=wrong_signing_key,
+            ),
+            "wrong-issuer": self.token(
+                "owner-a", issuer="https://attacker.example/",
+            ),
+            "expired": self.token(
+                "owner-a", expires_at=int(time.time()) - 300,
+            ),
+            "unknown-kid": self.token("owner-a", kid="unknown-key-id"),
+            "algorithm-none": self.token("owner-a", algorithm="none"),
+            "hs256": self.token("owner-a", algorithm="HS256"),
+            "malformed": "this-is-not-a-jwt",
+        }
+        for case, token in invalid_tokens.items():
+            with self.subTest(case=case):
+                response = self.client.get(
+                    "/api/paper/accounts",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                self.assertEqual(response.status_code, 401, response.text)
+                self.assertNotEqual(response.status_code, 500)
 
     def test_paper_routes_verify_rs256_identity_and_enforce_owner_scope(self):
         missing_token = self.client.get("/api/paper/accounts")
