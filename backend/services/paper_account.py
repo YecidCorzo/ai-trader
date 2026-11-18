@@ -354,7 +354,9 @@ class PaperAccountService:
                 if trade["side"] == "LONG"
                 else quantity * (entry - exit_fill)
             )
-            unrealized += gross - Decimal(trade["entry_fee"]) - exit_fee
+            unrealized += (
+                gross - Decimal(trade["entry_fee"]) - exit_fee
+            ).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_EVEN)
         return self._balance(account_id) + unrealized
 
     def _insert_event(
