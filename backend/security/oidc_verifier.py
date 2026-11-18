@@ -40,12 +40,15 @@ class OIDCJWTVerifier:
     jwks_url: str
     jwks_client: object | None = None
     leeway_seconds: int = 30
+    max_token_lifetime_seconds: int = 3600
 
     def __post_init__(self):
         if not self.issuer.strip() or not self.audience.strip() or not self.jwks_url.strip():
             raise OIDCConfigurationError("OIDC issuer, audience y JWKS URL son obligatorios")
         if self.leeway_seconds < 0 or self.leeway_seconds > 120:
             raise OIDCConfigurationError("OIDC clock leeway debe estar entre 0 y 120 segundos")
+        if self.max_token_lifetime_seconds < 60 or self.max_token_lifetime_seconds > 3600:
+            raise OIDCConfigurationError("OIDC token lifetime máximo debe estar entre 60 y 3600 segundos")
         if self.jwks_client is None and (
             not self.issuer.startswith("https://")
             or not self.jwks_url.startswith("https://")
@@ -83,10 +86,23 @@ class OIDCJWTVerifier:
                     "verify_signature": True,
                     "verify_exp": True,
                     "verify_iat": True,
+                    "verify_nbf": True,
                     "verify_iss": True,
                     "verify_aud": True,
                 },
             )
+            issued_at = claims.get("iat")
+            expires_at = claims.get("exp")
+            if (
+                isinstance(issued_at, bool)
+                or not isinstance(issued_at, (int, float))
+                or isinstance(expires_at, bool)
+                or not isinstance(expires_at, (int, float))
+                or expires_at <= issued_at
+                or expires_at - issued_at > self.max_token_lifetime_seconds
+            ):
+                raise InvalidBearerToken("Bearer token lifetime inválido")
+
             subject = claims.get("sub")
             issuer = claims.get("iss")
             if not isinstance(subject, str) or not subject.strip():
