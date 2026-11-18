@@ -9,16 +9,20 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: #0b1020;
+      background: radial-gradient(ellipse at top, #17233b 0%, #0b1020 48%);
       color: #e8edf8;
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
     }
     header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 22px 5%;
+      gap: 16px;
+      padding: 22px max(5%, calc((100% - 1320px) / 2));
       border-bottom: 1px solid #263047;
+      background: rgba(11, 16, 32, .72);
+      backdrop-filter: blur(14px);
     }
     h1 { margin: 0; font-size: 23px; }
     .muted { color: #96a4bc; }
@@ -29,7 +33,21 @@
       border-radius: 8px;
       font-size: 12px;
     }
-    main { max-width: 1200px; margin: auto; padding: 28px 20px; }
+    main { max-width: 1360px; margin: auto; padding: 32px 24px 48px; }
+    main > .muted:first-child { margin: 0 0 18px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+    .grid .card { min-width: 0; margin-bottom: 0; background: linear-gradient(145deg, #17233a, #111a2c); }
+    .grid .muted { font-size: 13px; }
+    .grid .value { letter-spacing: -.03em; }
+    #live-price { margin-top: 8px; color: #65e6a5; font-size: 15px; font-weight: 600; }
+    .market-note { margin: 7px 0 0; color: #8190aa; font-size: 12px; }
+    .card h2 { margin-top: 0; font-size: 19px; letter-spacing: -.02em; }
+    .card h3 { font-size: 16px; }
+    .signal-box { padding: 16px; border: 1px solid #293953; border-radius: 10px; background: #0d1526; }
+    .status { line-height: 1.55; }
+    button { transition: filter .15s ease, transform .15s ease, opacity .15s ease; }
+    button:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #7da7ff; outline-offset: 2px; }
+    button:disabled { cursor: wait; opacity: .65; }
     .grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -80,10 +98,15 @@
     .backtest-run { background: #3156a5; margin-top: 14px; }
     #backtest-result { white-space: pre-wrap; line-height: 1.6; margin-top: 14px; color: #d7e0ef; }
     #signal-box { white-space: pre-wrap; line-height: 1.6; margin-top: 14px; color: #d7e0ef; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     @media (max-width: 700px) {
       .grid { grid-template-columns: 1fr; }
       header { padding: 18px; }
-      main { padding: 18px 12px; }
+      main { padding: 22px 14px 36px; }
+      #candles-chart { height: 320px !important; }
+      .actions { flex-direction: column; }
     }
   </style>
 </head>
@@ -100,18 +123,19 @@
       <div class="card">
         <div class="muted">Mercado</div>
         <div class="value">SOL / USDT</div>
-        <div id="live-price">Cargando precio ...</div>            
+        <div id="live-price">Cargando precio ...</div>
+        <p class="market-note">Precio público · Binance · solo lectura</p>            
       </div>
       <div class="card">
-        <div class="muted">Balance demo</div>
+        <div class="muted">Capital de cuenta PAPER</div>
         <div class="value" id="paper-balance">No configurado</div>
-        <p class="muted" id="paper-account-status">Capital inicial PAPER pendiente de configurar</p>
+        <p class="muted" id="paper-account-status">Sin capital simulado asignado; no se inventa ningún saldo.</p>
       </div>
 
       <div class="card">
-        <div class="muted">Estado del bot</div>
-        <div class="value" id="paper-bot-status">Cuenta no configurada</div>
-        <p class="muted">Sin órdenes reales</p>
+        <div class="muted">Estado de cuenta</div>
+        <div class="value" id="paper-bot-status">Pendiente</div>
+        <p class="muted">Sin ejecución automática ni órdenes reales.</p>
       </div>
     </section>
 
@@ -173,7 +197,7 @@
           <tr><th>Par</th><th>Dirección</th><th>Estado</th></tr>
         </thead>
         <tbody id="positions">
-          <tr><td colspan="3" class="muted">No hay posiciones abiertas</td></tr>
+          <tr><td colspan="3" class="muted">Las posiciones aparecerán cuando exista una cuenta PAPER configurada.</td></tr>
         </tbody>
       </table>
     </section>
