@@ -124,6 +124,67 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 401, response.text)
                 self.assertNotEqual(response.status_code, 500)
 
+    def test_owner_cannot_mutate_or_operate_on_another_users_account(self):
+        owner_a_token = self.token("owner-a")
+        owner_b_token = self.token("owner-b")
+        created = self.client.post(
+            "/api/paper/accounts",
+            headers={"Authorization": f"Bearer {owner_a_token}"},
+            json={
+                "name": "Cross-owner mutation guard",
+                "quote_currency": "USDT",
+                "opening_capital": "2500",
+                "idempotency_key": "cross-owner-opening-a",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        account_id = created.json()["account"]["id"]
+        owner_b_headers = {"Authorization": f"Bearer {owner_b_token}"}
+
+        requests = [
+            ("list-trades", "GET", f"/api/paper/accounts/{account_id}/trades", None),
+            ("open-trade", "POST", f"/api/paper/accounts/{account_id}/trades", {
+                "symbol": "SOLUSDT",
+                "strategy": "cross-owner-test",
+                "side": "LONG",
+                "stop_price": "100",
+                "idempotency_key": "cross-owner-trade-b",
+            }),
+            ("close-trade", "POST", f"/api/paper/accounts/{account_id}/trades/known-trade-id/close", {
+                "exit_fee": "0",
+            }),
+            ("fund-account", "POST", f"/api/paper/accounts/{account_id}/funding", {
+                "event_type": "DEPOSIT",
+                "amount": "100",
+                "idempotency_key": "cross-owner-funding-b",
+            }),
+            ("read-risk", "GET", f"/api/paper/accounts/{account_id}/risk", None),
+            ("halt-account", "POST", f"/api/paper/accounts/{account_id}/halt", {
+                "reason": "cross-owner authorization regression",
+            }),
+            ("reset-account", "POST", f"/api/paper/accounts/{account_id}/reset", {
+                "confirmed": True,
+            }),
+            ("read-events", "GET", f"/api/paper/accounts/{account_id}/events", None),
+        ]
+
+        for case, method, url, payload in requests:
+            with self.subTest(operation=case):
+                response = self.client.request(
+                    method,
+                    url,
+                    headers=owner_b_headers,
+                    json=payload,
+                )
+                self.assertEqual(response.status_code, 404, response.text)
+
+        owner_a_read = self.client.get(
+            f"/api/paper/accounts/{account_id}",
+            headers={"Authorization": f"Bearer {owner_a_token}"},
+        )
+        self.assertEqual(owner_a_read.status_code, 200, owner_a_read.text)
+        self.assertEqual(owner_a_read.json()["balance"], "2500.00000000")
+
     def test_paper_routes_verify_rs256_identity_and_enforce_owner_scope(self):
         missing_token = self.client.get("/api/paper/accounts")
         self.assertEqual(missing_token.status_code, 401)
