@@ -341,13 +341,20 @@ class PaperAccountService:
                 if not isinstance(metadata, dict):
                     raise ValueError("metadata_json no es un objeto")
                 minimum_exit_fee = Decimal(str(metadata.get("requested_exit_fee", "0")))
+                if not minimum_exit_fee.is_finite() or minimum_exit_fee < 0:
+                    raise ValueError("requested_exit_fee inválida")
+            except (InvalidOperation, TypeError, ValueError, json.JSONDecodeError):
+                raise PaperAccountError(
+                    f"Metadatos de costes inválidos para {trade['symbol']}"
+                ) from None
+            try:
                 exit_fill = adverse_exit_fill(price, trade["side"])
                 exit_fee = calculate_exit_fee(
                     quantity, exit_fill, minimum_fee=minimum_exit_fee,
                 )
-            except (InvalidOperation, TypeError, ValueError, json.JSONDecodeError):
+            except (InvalidOperation, TypeError, ValueError):
                 raise PaperAccountError(
-                    f"Metadatos de costes inválidos para {trade['symbol']}"
+                    f"Cotización/fill inválido para {trade['symbol']}"
                 ) from None
             gross = (
                 quantity * (exit_fill - entry)
