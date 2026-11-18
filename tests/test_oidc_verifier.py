@@ -66,32 +66,45 @@ class OIDCVerifierTests(unittest.TestCase):
         self.assertEqual(principal.issuer, "https://identity.example.test/")
         self.assertEqual(principal.subject, "user-123")
 
-    def test_expired_wrong_issuer_and_wrong_audience_tokens_are_rejected(self):
+    def test_expired_and_wrong_audience_tokens_are_rejected(self):
         verifier = self.verifier()
         with self.assertRaises(InvalidBearerToken):
             verifier.verify(self.token(exp=int(time.time()) - 300))
         with self.assertRaises(InvalidBearerToken):
-            verifier.verify(self.token(iss="https://attacker.example/"))
-        with self.assertRaises(InvalidBearerToken):
             verifier.verify(self.token(aud="another-api"))
 
-    def test_missing_required_subject_and_unsupported_algorithm_are_rejected(self):
+    def test_wrong_issuer_is_rejected(self):
+        with self.assertRaises(InvalidBearerToken):
+            self.verifier().verify(self.token(iss="https://attacker.example/"))
+
+    def test_missing_required_subject_is_rejected(self):
         claims = {
             "iss": "https://identity.example.test/",
             "aud": "ai-trader-paper",
             "iat": int(time.time()),
             "exp": int(time.time()) + 300,
         }
-        token = jwt.encode(claims, self.private_key, algorithm="RS256", headers={"kid": "test-key"})
-        with self.assertRaises(InvalidBearerToken):
-            self.verifier().verify(token)
-        token_hs = jwt.encode(
-            {"iss": "https://identity.example.test/", "aud": "ai-trader-paper",
-             "sub": "user-123", "iat": int(time.time()), "exp": int(time.time()) + 300},
-            "not-a-real-secret", algorithm="HS256",
+        token = jwt.encode(
+            claims, self.private_key, algorithm="RS256",
+            headers={"kid": "test-key"},
         )
         with self.assertRaises(InvalidBearerToken):
-            self.verifier().verify(token_hs)
+            self.verifier().verify(token)
+
+    def test_hs256_and_none_algorithms_are_rejected(self):
+        claims = {
+            "iss": "https://identity.example.test/",
+            "aud": "ai-trader-paper",
+            "sub": "user-123",
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 300,
+        }
+        token_hs = jwt.encode(claims, "not-a-real-secret", algorithm="HS256")
+        token_none = jwt.encode(claims, key="", algorithm="none")
+        for token in (token_hs, token_none):
+            with self.subTest(token_header=jwt.get_unverified_header(token)):
+                with self.assertRaises(InvalidBearerToken):
+                    self.verifier().verify(token)
 
     def test_invalid_oversized_and_empty_tokens_are_rejected(self):
         verifier = self.verifier()
