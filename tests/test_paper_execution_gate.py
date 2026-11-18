@@ -318,6 +318,7 @@ class PaperExecutionGateTests(unittest.TestCase):
                         trades.append(self.open_position(
                             account_id=account["id"], symbol=symbols[index],
                             side=side, stop_price=stop, estimated_exit_fee="5",
+                            risk_fraction="0.002",
                             idempotency_key=f"property-{side.lower()}-{case}-{index}",
                         ))
                     gap_price = (Decimal(rng.randint(8000, 9400)) / 100
