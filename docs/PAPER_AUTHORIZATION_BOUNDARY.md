@@ -1,148 +1,149 @@
 # PAPER authentication and account-ownership boundary
 
-## Status
+## Current implementation status
 
-Design and implementation gate for the PAPER-only release. Provider-neutral
-security primitives and persistent owner scoping are implemented, but this does
-**not** enable account or execution HTTP routes. No production identity provider,
-token verifier, session store, or user-management system is configured. Until a
-real verifier is selected, implemented and tested, account/execution routes must
-remain absent and the API must not accept an account ID as proof of identity.
+The persistent PAPER API routes are **mounted** in `backend/main.py` under
+`/api/paper/*`. They are protected by `get_verified_principal` and fail closed:
+a request without a Bearer credential receives HTTP 401; if OIDC environment
+configuration is missing, a request with credentials receives HTTP 503. The routes
+are not conditionally removed from the FastAPI application.
+
+The active verifier is `OIDCJWTVerifier` in
+`backend/security/oidc_verifier.py`. It uses a configured HTTPS issuer, audience
+and JWKS URL; validates RS256 signatures and required `iss`, `sub`, `aud`,
+`iat` and `exp` claims; and caches the JWKS client/key set. This is a
+provider-neutral JWT/JWKS verifier, not a complete provider integration.
+
+**Release status: BLOCKED pending provider-backed acceptance and security closure.**
+No real OIDC provider has yet been configured and exercised end to end. The
+current verifier does not implement token/session revocation, provider introspection,
+or an explicit maximum access-token lifetime. Authentication time (`auth_time`)
+is not required. These are open security decisions, not capabilities to assume.
+The verifier uses a configured JWKS URL; OIDC discovery and browser Authorization
+Code + PKCE are not implemented by the API.
 
 ## Security invariants
 
-1. **Identity comes from the server.** A future FastAPI dependency must validate a
-   credential using a configured verifier and construct the authenticated principal.
-   Request bodies, query parameters, headers such as `X-User-Id`, cookies that have
-   not been verified, and client-supplied `owner_id` values are never identity sources.
-2. **Fail closed.** Missing verifier configuration, missing credentials, invalid
-   signatures, wrong issuer/audience, expired credentials, revoked sessions, or
-   unavailable revocation state must reject access. There is no anonymous fallback
-   and no development bypass enabled by default.
-3. **Stable subject.** The principal is identified by the verified pair
-   `(issuer, subject)`, not email, display name, username, or a mutable profile field.
-   The verifier must validate issuer and audience and must not accept an unverified JWT
-   decode as authentication.
-4. **Persisted ownership.** Every newly created PAPER account is owned by exactly one
-   verified principal. Ownership is stored in the database and is immutable. Existing
-   accounts from before ownership is introduced remain unowned; migration must never
-   guess an owner or attach them to the first user who logs in.
+1. **Identity comes from the server.** A principal is constructed only after
+   server-side bearer-token verification. Request bodies, query parameters, headers
+   such as `X-User-Id`, unverified cookies and client-supplied `owner_id` values
+   are never identity sources.
+2. **Fail closed.** Missing credentials, missing OIDC configuration, invalid
+   signatures, wrong issuer/audience, expired or not-yet-valid credentials, and
+   unavailable required security state must reject access. There is no anonymous
+   fallback or development bypass.
+3. **Stable subject.** The principal is the verified pair `(issuer, subject)`,
+   not email, display name, username or a mutable profile field.
+4. **Persisted ownership.** Every newly created PAPER account is owned by exactly
+   one verified principal. Ownership is stored in the database and immutable.
+   Legacy rows remain unowned; migrations never guess an owner.
 5. **Authorize every object access.** Account, trade, event, balance, equity, risk,
-   circuit-breaker and execution operations must first prove that the authenticated
-   principal owns the account. Trade IDs are not authorization tokens. A trade lookup
-   must be scoped by both trade ID and account ID.
+   circuit-breaker and execution operations must prove account ownership. Trade IDs
+   are not authorization tokens; trade lookup is scoped by trade ID and account ID.
 6. **Prevent enumeration.** A missing account and an account owned by another
-   principal should have the same externally visible response (prefer 404). Do not
-   reveal the other owner's existence, identity, balance, trades or metadata.
-7. **Idempotency is scoped.** Account creation and funding idempotency keys must be
-   scoped to the authenticated owner/account. Reusing another owner's key must not
-   disclose or mutate their records.
-8. **Workers are not users.** The stop worker is a trusted internal process with
-   database access, not an HTTP principal. It must never be exposed as a route or
-   accept an account identifier from an untrusted caller.
-9. **No cross-domain identity.** PAPER account ownership is separate from personal
-   finance accounts and any future bank/exchange identity. No bank credentials,
-   exchange credentials or real-money actions are part of this boundary.
+   principal should have the same externally visible response (404).
+7. **Idempotency is scoped.** Account creation idempotency is scoped to the verified
+   issuer/subject; funding and trade-entry keys are scoped to the account.
+8. **Workers are not users.** The stop worker is an internal process with database
+   access, not an HTTP principal. It is not exposed as a route.
+9. **No cross-domain identity.** PAPER ownership is separate from personal finance
+   accounts and any future bank/exchange identity. No bank credentials, exchange
+   credentials or real-money actions are part of this boundary.
 
-## Required implementation contract
+## Principal and verifier
 
-### Principal
+`VerifiedPrincipal` is immutable and contains only verified issuer and subject.
+It does not contain the raw credential.
 
-The provider-neutral `VerifiedPrincipal` value is immutable and contains the
-verified issuer and stable subject. It deliberately contains no raw credential.
-A production authentication adapter must additionally validate and enforce
-credential/session expiry, authentication time and revocation/session state.
+The active verifier requires HTTPS issuer/JWKS configuration, permits RS256 only,
+requires `exp`, `iat`, `iss`, `sub` and `aud`, checks signature/issuer/
+audience/time claims, and rejects malformed or oversized bearer tokens. Raw tokens
+are not persisted in PAPER application tables.
 
-The adapter must validate signature/algorithm allow-list, issuer, audience, expiry,
-not-before, and revocation/session state. It must reject malformed or ambiguous
-claims. Secrets and raw credentials must not be logged or persisted in application
-tables. The domain authorization layer receives only the verified principal, never
-the raw bearer token.
+The following are **not currently implemented by the active verifier** and must
+not be represented as covered:
+- provider session or token revocation checks;
+- OAuth token introspection or a revocation/denylist store;
+- an explicit maximum permitted `exp - iat` lifetime;
+- required `auth_time` or a maximum authentication age;
+- OIDC discovery and provider-specific browser sign-in/session handling.
 
-### Ownership persistence
+Before release, choose and document a revocation strategy. If short-lived access
+tokens are used instead of per-request introspection, define and enforce a maximum
+token lifetime and document the residual revocation window. Provider outage and
+JWKS key-rotation behavior must be exercised with the selected provider.
 
-Migration `0007_paper_account_ownership.sql` adds verified `(issuer, subject)`
-ownership to every newly created account. It enforces:
-- both owner fields are non-empty;
-- owner fields cannot be changed after account creation;
-- ownership cannot be deleted or reassigned;
-- legacy rows remain explicitly unowned and inaccessible through user routes;
-- indexes support owner-scoped account listing and lookup.
+## Ownership persistence
 
-Do not backfill historical ownership. Any legacy account that must be used again
-requires an explicit, audited administrative recovery procedure after the identity
-provider is configured; it must not be silently claimed.
+Migration `0007_paper_account_ownership.sql` adds verified
+`(issuer, subject)` ownership to new PAPER accounts. SQLite constraints/triggers
+require both owner fields and prevent ownership changes. Legacy rows remain
+explicitly unowned and inaccessible through owner-scoped routes.
 
-### Authorization service and route dependencies
+Do not backfill historical ownership. Any legacy account that must be recovered
+requires a separate, explicit and audited administrative procedure; it must not be
+silently claimed by the first user who logs in.
 
-The provider-neutral `build_current_principal_dependency` fails closed when no
-verifier is configured and accepts only a `VerifiedPrincipal` returned by the
-verifier. `PaperAuthorizationService` centralizes account/trade ownership lookups.
-Use these as the foundation for future route dependencies; they must:
-- reject an absent/invalid principal;
-- fetch an account only when both account ID and verified owner match;
-- fetch a trade only when trade ID, account ID and owner all match;
-- pass the authorized account object to downstream services;
-- never let a downstream service infer owner identity from a request payload.
+## Authorization and routes
 
-All account/execution routes must depend on this authorization boundary. The default
-application configuration must not mount those routes until a real verifier is
-configured. A test-only fake verifier may be injected in tests, but must not be
-selectable through a production environment flag or public request value.
+`PaperAuthorizationService` performs account lookups using account ID plus
+verified issuer/subject, and trade lookups using trade ID, account ID and verified
+owner. Cross-owner and nonexistent resources map to the same not-found response.
 
-## Required tests before API routes
+The router has a router-level `Depends(get_verified_principal)`; handlers also
+request the same dependency to receive the principal. Account creation, listing,
+funding, equity, trades, events, risk, halt and reset are therefore authenticated
+API surfaces. The stop worker remains an internal process.
 
-- missing principal, invalid signature, wrong issuer/audience, expired token,
-  not-yet-valid token and revoked session all fail closed;
-- verifier unavailable or revocation state unavailable fails closed;
-- caller-supplied `owner_id` and `X-User-Id` cannot override verified identity;
-- principal A can list/read/use only A's accounts and trades;
-- principal A attempting to read, close, fund, halt or reset principal B's account
-  receives the same not-found response as a nonexistent account;
-- trade IDs from another account cannot be used even when the trade ID is known;
-- account ownership and issuer/subject are immutable at the database layer;
-- legacy unowned accounts remain inaccessible and are not auto-claimed;
-- account-creation and funding idempotency keys cannot cross owner boundaries;
-- concurrent account creation cannot create duplicate ownership or bypass checks;
-- no account/execution route is mounted when authentication is unconfigured;
-- worker-only stop processing remains internal and is not reachable over HTTP.
+The API is currently mounted even when OIDC is not configured; it must fail closed
+rather than become anonymously accessible. Do not add a development bypass or
+accept account IDs as proof of identity.
 
-## API exposure gate
+## Automated coverage currently present
 
-Do not add account creation, account listing, funding, equity, trade execution,
-trade close, circuit-breaker, or stop-management HTTP routes until all required tests
-above pass with the selected real verifier and the ownership migration. Before that
-point, the existing public market-analysis and backtest endpoints remain read-only
-analysis surfaces and must not imply that an account is authenticated or ready.
+- Verifier unit tests cover valid RS256 identity, expired token, wrong audience,
+  wrong issuer, missing subject, HS256/none rejection, malformed/empty/oversized
+  token, JWKS client reuse, missing configuration (503), missing Bearer (401),
+  and HTTPS configuration.
+- Route-level tests use ephemeral RSA keys, an in-process deterministic JWKS
+  resolver and temporary SQLite. They exercise missing credentials, invalid
+  signature (including same `kid`), wrong issuer/audience, expired token,
+  unknown `kid`, unsupported algorithms, malformed token, account creation/read,
+  and cross-owner read isolation.
+- These tests are hermetic. They do not prove real provider discovery, external
+  TLS/JWKS delivery, browser PKCE, provider session behavior, revocation, or the
+  full set of cross-owner write operations.
 
-## Implemented now
+Additional tests required before release:
+- provider-backed token issuance and JWKS/TLS/key-rotation acceptance;
+- explicit maximum token lifetime and the chosen revocation/session policy;
+- not-yet-valid token and provider/JWKS outage behavior;
+- cross-owner attempts to close, fund, halt and reset, plus trade-ID/account-ID
+  mismatch cases;
+- caller-supplied `owner_id` and `X-User-Id` spoofing at the actual API boundary;
+- concurrent idempotency and funding replay behavior at the API boundary;
+- verification that legacy unowned accounts remain inaccessible.
 
-- Immutable `VerifiedPrincipal` containing issuer + subject only.
-- Provider-neutral async bearer-verifier dependency. Missing configuration returns
-  503; malformed or rejected credentials return a generic 401 without leaking
-  verifier diagnostics.
-- New PAPER accounts require an owner. Owner fields are immutable at the SQLite
-  layer; legacy rows remain unowned.
-- Account-creation idempotency keys are SHA-256 digests scoped to issuer + subject,
-  so different owners may safely reuse the same client key.
-- Central owner-scoped account and trade lookup returns the same not-found domain
-  error for cross-owner and nonexistent resources.
-- Tests cover fail-closed unconfigured auth, malformed/rejected bearer tokens,
-  spoofed `X-User-Id`, immutable principals/ownership, owner-scoped idempotency,
-  and account/trade isolation.
+## Provider-backed acceptance gate
 
-## Still blocked on provider selection
+A real provider test must use a dedicated test tenant/client, two distinct test
+identities, HTTPS issuer/JWKS endpoints, and a disposable or dedicated persistent
+test database. Use short-lived access tokens and keep them out of source control,
+issues, PRs and logs. The test must cover authenticated account creation with
+fictional capital, equity read, simulated trade open/close only when market data
+and risk gates permit, ledger reconciliation, and cross-owner isolation.
 
-The fake verifier in unit tests is not a production identity provider. Token
-signature/algorithm, issuer, audience, expiry, not-before, revocation, session
-management and provider outage behavior cannot be certified until a real provider
-adapter is selected and tested. Therefore no account/execution HTTP routes are
-mounted, and the PAPER account service is not exposed to remote callers.
+Do not close issue #47 or declare the PAPER release accepted until the provider-backed
+test and the outstanding security checks above have evidence. A successful API
+smoke test alone is not release acceptance.
 
-## Provider selection remains an explicit decision
+## Safety boundary
 
-No identity provider is assumed by this design. A provider must be selected based
-on deployment needs, supported verification libraries, session revocation behavior,
-and operational ownership. Do not invent a home-grown JWT scheme or ship a placeholder
-secret as a substitute. Provider selection and configuration are a separate reviewed
-implementation step.
+- PAPER only; all account capital is fictional.
+- No exchange account credentials, live endpoints, exchange orders or real funds.
+- Binance is used only for public read-only market prices.
+- Missing opening capital or stale/missing market marks fail closed.
+- Stop monitoring is polling-based and cannot guarantee execution during gaps,
+  outages or worker/database failures.
+- Passing authentication acceptance does not establish strategy profitability or
+  guarantee trading outcomes.
