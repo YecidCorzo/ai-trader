@@ -23,6 +23,14 @@ The verifier checks signature, exact issuer, audience, expiry and issue time.
 JWKS is cached for five minutes to allow key rotation without a network fetch
 on every request.
 
+Automated security coverage exercises the real PAPER route dependency with
+short-lived test JWTs: invalid signatures (including a different key with the
+same `kid`), wrong issuer/audience, expired tokens, unknown `kid`, unsupported
+`alg=none`/HS256, and malformed tokens must all return HTTP 401 (never 500).
+Verifier unit tests separately cover required `iss`, `sub`, algorithm and
+time/audience claims. These hermetic tests do not replace provider-backed
+discovery, TLS/JWKS delivery, browser PKCE or session acceptance.
+
 The API does not provide a local token-issuing endpoint. Obtain access tokens
 from the configured OIDC provider using its supported Authorization Code +
 PKCE flow in the frontend. Do not embed a client secret in a browser or put
