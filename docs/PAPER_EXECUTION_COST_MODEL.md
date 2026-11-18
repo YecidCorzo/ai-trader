@@ -23,6 +23,17 @@ connect to an exchange account, or place live/demo exchange orders.
 The stop-loss planned exit is also adjusted adversely by the same slippage
 rate. Entry and estimated stop-exit fees are included in per-unit planned loss.
 
+## PAPER equity
+
+For risk sizing and account reporting, open positions contribute estimated net
+liquidation P&L, not gross mark-to-entry P&L. The estimate applies the same
+side-aware adverse exit slippage and 0.10% exit-fee floor as simulated closing,
+subtracts the entry fee already incurred, and honors any larger persisted
+minimum exit fee supplied when the position was opened. With an unchanged
+public quote, closing immediately should reconcile to the same account equity.
+This remains an estimate: quotes can move before a close and actual stop-worker
+fees/fills may differ after a gap.
+
 ## Position sizing
 
 The service computes per-unit loss from the adverse entry fill to the adverse

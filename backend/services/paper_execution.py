@@ -13,6 +13,9 @@ try:
     from backend.services.paper_authorization import PaperAuthorizationService
     from backend.services.circuit_breaker import CircuitBreaker
     from backend.services.paper_account import PaperAccountService
+    from backend.services.paper_costs import (
+        PAPER_FEE_RATE, PAPER_SLIPPAGE_RATE, adverse_exit_fill, calculate_exit_fee,
+    )
     from backend.services.risk_engine import RiskEngine, RiskSnapshot
     from backend.services.trade_ledger import TradeLedger
 except ImportError:  # Support uvicorn with backend/ as the app directory.
@@ -21,6 +24,9 @@ except ImportError:  # Support uvicorn with backend/ as the app directory.
     from services.paper_authorization import PaperAuthorizationService
     from services.circuit_breaker import CircuitBreaker
     from services.paper_account import PaperAccountService
+    from services.paper_costs import (
+        PAPER_FEE_RATE, PAPER_SLIPPAGE_RATE, adverse_exit_fill, calculate_exit_fee,
+    )
     from services.risk_engine import RiskEngine, RiskSnapshot
     from services.trade_ledger import TradeLedger
 
@@ -53,8 +59,6 @@ def _non_negative_decimal(value: Decimal | str | int, field: str) -> Decimal:
 
 # Quote assets supported by Binance spot symbols. Matching is exact: we do not
 # infer an account currency from an arbitrary suffix or apply implicit FX.
-PAPER_FEE_RATE = Decimal("0.001")
-PAPER_SLIPPAGE_RATE = Decimal("0.0005")
 PAPER_MAX_RISK_FRACTION = Decimal("0.01")
 
 
@@ -187,14 +191,7 @@ class PaperExecutionService:
             Decimal("0.00000001"),
             rounding=ROUND_UP if side == "LONG" else ROUND_DOWN,
         )
-        stop_exit = stop * (
-            Decimal("1") - slippage_rate if side == "LONG"
-            else Decimal("1") + slippage_rate
-        )
-        stop_exit = stop_exit.quantize(
-            Decimal("0.00000001"),
-            rounding=ROUND_DOWN if side == "LONG" else ROUND_UP,
-        )
+        stop_exit = adverse_exit_fill(stop, side, slippage_rate=slippage_rate)
         if stop_exit <= 0:
             raise ValueError("El stop ajustado por slippage debe ser positivo")
         if side == "LONG" and stop >= quote_price:
@@ -342,6 +339,17 @@ class PaperExecutionService:
         if trade["paper_account_id"] != account_id:
             raise ValueError("La operación no pertenece a la cuenta PAPER indicada")
         closing_fee = _non_negative_decimal(exit_fee, "exit_fee")
+        try:
+            trade_metadata = json.loads(trade["metadata_json"] or "{}")
+            if not isinstance(trade_metadata, dict):
+                raise ValueError("metadata_json no es un objeto")
+            requested_minimum = _non_negative_decimal(
+                trade_metadata.get("requested_exit_fee", "0"),
+                "requested_exit_fee",
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise ValueError("Metadatos de costes inválidos para cerrar la operación") from None
+        closing_fee = max(closing_fee, requested_minimum)
         quotes = self._accounts.fetch_open_position_quotes(
             account_id, additional_symbols=(trade["symbol"],),
         )
@@ -376,18 +384,14 @@ class PaperExecutionService:
             quote_price = _positive_decimal(quote.price, "market_exit_quote")
             slippage_rate = PAPER_SLIPPAGE_RATE
             fee_rate = PAPER_FEE_RATE
-            fill_price = quote_price * (
-                Decimal("1") - slippage_rate if current["side"] == "LONG"
-                else Decimal("1") + slippage_rate
-            )
-            fill_price = fill_price.quantize(
-                Decimal("0.00000001"),
-                rounding=ROUND_DOWN if current["side"] == "LONG" else ROUND_UP,
+            fill_price = adverse_exit_fill(
+                quote_price, current["side"], slippage_rate=slippage_rate,
             )
             quantity = Decimal(current["quantity"])
-            engine_fee = quantity * fill_price * fee_rate
-            closing_fee = max(_non_negative_decimal(exit_fee, "exit_fee"), engine_fee).quantize(
-                Decimal("0.00000001"), rounding=ROUND_UP,
+            closing_fee = calculate_exit_fee(
+                quantity, fill_price,
+                minimum_fee=_non_negative_decimal(exit_fee, "exit_fee"),
+                fee_rate=fee_rate,
             )
             closed = self._ledger.close_trade(
                 trade_id, exit_price=fill_price,
@@ -457,14 +461,14 @@ class PaperExecutionService:
             )
             if not triggered:
                 continue
-            estimated_fee = _non_negative_decimal(
-                metadata.get("estimated_exit_fee", "0"),
-                "estimated_exit_fee",
+            requested_minimum = _non_negative_decimal(
+                metadata.get("requested_exit_fee", "0"),
+                "requested_exit_fee",
             )
             try:
                 result = self._close_position_with_quote(
                     trade["id"], account_id=account_id, quote=quote,
-                    exit_fee=estimated_fee, exit_reason="stop_loss_triggered",
+                    exit_fee=requested_minimum, exit_reason="stop_loss_triggered",
                     actor={"type": "system", "name": "paper_stop_worker"},
                 )
             except ValueError as error:

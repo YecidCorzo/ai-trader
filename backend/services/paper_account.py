@@ -1,7 +1,8 @@
-"""Persistent capital ledger and fail-closed PAPER mark-to-market equity."""
+"""Persistent capital ledger and fail-closed PAPER net-liquidation equity."""
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
@@ -10,9 +11,15 @@ from uuid import uuid4
 try:
     from backend.security.principal import VerifiedPrincipal
     from backend.services.paper_price import BinancePublicPriceProvider, PriceQuote
+    from backend.services.paper_costs import (
+        adverse_exit_fill, calculate_exit_fee,
+    )
 except ImportError:  # Support `cd backend && import main`.
     from security.principal import VerifiedPrincipal
     from services.paper_price import BinancePublicPriceProvider, PriceQuote
+    from services.paper_costs import (
+        adverse_exit_fill, calculate_exit_fee,
+    )
 
 
 MONEY_QUANTUM = Decimal("0.00000001")
@@ -304,11 +311,11 @@ class PaperAccountService:
     def calculate_equity(
         self, account_id: str, *, now: datetime | None = None,
     ) -> Decimal:
-        """Recompute equity only from persisted account events and price snapshots."""
+        """Recompute net-liquidation equity from persisted events and fresh price snapshots."""
         self.get_account(account_id)
         checked_at = _utc(now)
         rows = self._connection.execute(
-            """SELECT symbol, side, quantity, entry_price, entry_fee
+            """SELECT symbol, side, quantity, entry_price, entry_fee, metadata_json
                FROM paper_trades
                WHERE paper_account_id = ? AND status = 'OPEN'""",
             (account_id,),
@@ -329,8 +336,34 @@ class PaperAccountService:
                 raise StaleMarketPriceError(f"Precio stale o con timestamp inválido para {trade['symbol']}")
             quantity = Decimal(trade["quantity"])
             entry = Decimal(trade["entry_price"])
-            gross = quantity * (price - entry) if trade["side"] == "LONG" else quantity * (entry - price)
-            unrealized += gross - Decimal(trade["entry_fee"])
+            try:
+                metadata = json.loads(trade["metadata_json"] or "{}")
+                if not isinstance(metadata, dict):
+                    raise ValueError("metadata_json no es un objeto")
+                minimum_exit_fee = Decimal(str(metadata.get("requested_exit_fee", "0")))
+                if not minimum_exit_fee.is_finite() or minimum_exit_fee < 0:
+                    raise ValueError("requested_exit_fee inválida")
+            except (InvalidOperation, TypeError, ValueError, json.JSONDecodeError):
+                raise PaperAccountError(
+                    f"Metadatos de costes inválidos para {trade['symbol']}"
+                ) from None
+            try:
+                exit_fill = adverse_exit_fill(price, trade["side"])
+                exit_fee = calculate_exit_fee(
+                    quantity, exit_fill, minimum_fee=minimum_exit_fee,
+                )
+            except (InvalidOperation, TypeError, ValueError):
+                raise PaperAccountError(
+                    f"Cotización/fill inválido para {trade['symbol']}"
+                ) from None
+            gross = (
+                quantity * (exit_fill - entry)
+                if trade["side"] == "LONG"
+                else quantity * (entry - exit_fill)
+            )
+            unrealized += (
+                gross - Decimal(trade["entry_fee"]) - exit_fee
+            ).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_EVEN)
         return self._balance(account_id) + unrealized
 
     def _insert_event(
