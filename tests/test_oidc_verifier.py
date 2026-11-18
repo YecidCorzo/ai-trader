@@ -73,6 +73,15 @@ class OIDCVerifierTests(unittest.TestCase):
         with self.assertRaises(InvalidBearerToken):
             verifier.verify(self.token(aud="another-api"))
 
+    def test_tokens_exceeding_maximum_lifetime_are_rejected(self):
+        now = int(time.time())
+        with self.assertRaises(InvalidBearerToken):
+            self.verifier().verify(self.token(iat=now, exp=now + 3601))
+
+    def test_not_yet_valid_tokens_are_rejected(self):
+        with self.assertRaises(InvalidBearerToken):
+            self.verifier().verify(self.token(nbf=int(time.time()) + 300))
+
     def test_wrong_issuer_is_rejected(self):
         with self.assertRaises(InvalidBearerToken):
             self.verifier().verify(self.token(iss="https://attacker.example/"))
