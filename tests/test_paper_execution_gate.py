@@ -1,4 +1,5 @@
 import json
+import random
 import sqlite3
 import tempfile
 import unittest
@@ -253,6 +254,75 @@ class PaperExecutionGateTests(unittest.TestCase):
                 equity_after_close = self.accounts.get_equity(self.account["id"])
                 self.assertEqual(closed["status"], "CLOSED")
                 self.assertEqual(equity_before_close, equity_after_close)
+
+    def test_requested_exit_fee_is_used_for_manual_and_stop_closes(self):
+        for close_by_stop in (False, True):
+            with self.subTest(close_by_stop=close_by_stop):
+                self.provider.price = Decimal("100")
+                trade = self.open_position(
+                    estimated_exit_fee="5",
+                    idempotency_key=f"requested-exit-fee-{close_by_stop}",
+                )
+                metadata = json.loads(trade["metadata_json"])
+                self.assertEqual(Decimal(metadata["requested_exit_fee"]), Decimal("5"))
+                self.provider.price = Decimal("90")
+                if close_by_stop:
+                    closed = self.execution.process_stop_losses(self.account["id"])
+                    self.assertEqual(len(closed), 1)
+                    result = closed[0]
+                else:
+                    result = self.execution.close_position(
+                        trade["id"], account_id=self.account["id"],
+                        principal=self.principal,
+                    )
+                self.assertGreaterEqual(Decimal(result["exit_fee"]), Decimal("5"))
+
+    def test_randomized_multi_position_equity_reconciles_for_manual_and_stop_closes(self):
+        rng = random.Random(113114)
+        symbols = ("SOLUSDT", "BTCUSDT", "ETHUSDT")
+        for side in ("LONG", "SHORT"):
+            for case in range(20):
+                with self.subTest(side=side, case=case):
+                    self.provider.price = Decimal("100")
+                    account = self.accounts.create_account(
+                        name=f"Property {side} {case}", quote_currency="USDT",
+                        opening_capital="10000",
+                        idempotency_key=f"property-{side.lower()}-{case}",
+                        principal=self.principal,
+                    )
+                    execution = PaperExecutionService(
+                        self.connection,
+                        risk_engine=RiskEngine(RiskLimits(max_open_positions=3)),
+                        account_service=self.accounts,
+                    )
+                    self.execution = execution
+                    count = rng.randint(2, 3)
+                    trades = []
+                    for index in range(count):
+                        stop = (str(Decimal(rng.randint(9500, 9900)) / 100)
+                                if side == "LONG"
+                                else str(Decimal(rng.randint(10100, 10500)) / 100))
+                        trades.append(self.open_position(
+                            account_id=account["id"], symbol=symbols[index],
+                            side=side, stop_price=stop, estimated_exit_fee="5",
+                            idempotency_key=f"property-{side.lower()}-{case}-{index}",
+                        ))
+                    gap_price = (Decimal(rng.randint(8000, 9400)) / 100
+                                 if side == "LONG"
+                                 else Decimal(rng.randint(10600, 12000)) / 100)
+                    self.provider.price = gap_price
+                    before = self.accounts.get_equity(account["id"])
+                    if case % 2:
+                        closed = execution.process_stop_losses(account["id"])
+                        self.assertEqual(len(closed), count)
+                    else:
+                        for trade in trades:
+                            execution.close_position(
+                                trade["id"], account_id=account["id"],
+                                principal=self.principal,
+                            )
+                    after = self.accounts.get_equity(account["id"])
+                    self.assertEqual(before, after)
 
     def test_exit_price_is_market_sourced_and_account_scoped(self):
         trade = self.open_position()
