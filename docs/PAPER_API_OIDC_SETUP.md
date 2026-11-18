@@ -23,6 +23,14 @@ The verifier checks signature, exact issuer, audience, expiry and issue time.
 JWKS is cached for five minutes to allow key rotation without a network fetch
 on every request.
 
+Automated security coverage exercises the real PAPER route dependency with
+short-lived test JWTs: invalid signatures (including a different key with the
+same `kid`), wrong issuer/audience, expired tokens, unknown `kid`, unsupported
+`alg=none`/HS256, and malformed tokens must all return HTTP 401 (never 500).
+Verifier unit tests separately cover required `iss`, `sub`, algorithm and
+time/audience claims. These hermetic tests do not replace provider-backed
+discovery, TLS/JWKS delivery, browser PKCE or session acceptance.
+
 The API does not provide a local token-issuing endpoint. Obtain access tokens
 from the configured OIDC provider using its supported Authorization Code +
 PKCE flow in the frontend. Do not embed a client secret in a browser or put
@@ -132,3 +140,18 @@ OIDC identity provider, not by Binance.
 - Every PAPER API route requires OIDC identity and account ownership.
 - Reset requires explicit confirmation and is audited.
 - Internal PAPER balances are fictional ledger values, not exchange balances.
+
+## 7. Automated route-level regression
+
+The backend suite includes `tests/test_paper_oidc_route_integration.py`. It
+exercises the actual FastAPI PAPER routes with short-lived RS256 tokens signed
+by an ephemeral test-only key, a deterministic in-process JWKS key resolver,
+and a temporary SQLite database. It verifies the configured authentication
+dependency, missing-token rejection, signature/claim validation, account
+creation/read and cross-owner isolation.
+
+This is a hermetic regression test, **not** a real identity-provider
+acceptance: it does not exercise external OIDC discovery, HTTPS/TLS delivery
+of the provider's JWKS, browser Authorization Code + PKCE, provider sessions
+or revocation. The controlled-provider procedure in
+`docs/PAPER_RELEASE_ACCEPTANCE.md` remains mandatory before release.
