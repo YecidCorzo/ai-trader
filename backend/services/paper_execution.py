@@ -339,6 +339,17 @@ class PaperExecutionService:
         if trade["paper_account_id"] != account_id:
             raise ValueError("La operación no pertenece a la cuenta PAPER indicada")
         closing_fee = _non_negative_decimal(exit_fee, "exit_fee")
+        try:
+            trade_metadata = json.loads(trade["metadata_json"] or "{}")
+            if not isinstance(trade_metadata, dict):
+                raise ValueError("metadata_json no es un objeto")
+            requested_minimum = _non_negative_decimal(
+                trade_metadata.get("requested_exit_fee", "0"),
+                "requested_exit_fee",
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise ValueError("Metadatos de costes inválidos para cerrar la operación") from None
+        closing_fee = max(closing_fee, requested_minimum)
         quotes = self._accounts.fetch_open_position_quotes(
             account_id, additional_symbols=(trade["symbol"],),
         )
@@ -450,14 +461,14 @@ class PaperExecutionService:
             )
             if not triggered:
                 continue
-            estimated_fee = _non_negative_decimal(
-                metadata.get("estimated_exit_fee", "0"),
-                "estimated_exit_fee",
+            requested_minimum = _non_negative_decimal(
+                metadata.get("requested_exit_fee", "0"),
+                "requested_exit_fee",
             )
             try:
                 result = self._close_position_with_quote(
                     trade["id"], account_id=account_id, quote=quote,
-                    exit_fee=estimated_fee, exit_reason="stop_loss_triggered",
+                    exit_fee=requested_minimum, exit_reason="stop_loss_triggered",
                     actor={"type": "system", "name": "paper_stop_worker"},
                 )
             except ValueError as error:
