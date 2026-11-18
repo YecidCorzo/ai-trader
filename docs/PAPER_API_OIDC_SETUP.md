@@ -19,9 +19,10 @@ export AI_TRADER_OIDC_JWKS_URL="https://YOUR-ISSUER/.well-known/jwks.json"
 
 All three settings are required. Issuer and JWKS URL must use HTTPS. Tokens
 must be signed with RS256 and contain `iss`, `sub`, `aud`, `iat` and `exp`.
-The verifier checks signature, exact issuer, audience, expiry and issue time.
-JWKS is cached for five minutes to allow key rotation without a network fetch
-on every request.
+The verifier checks signature, exact issuer, audience, expiry, issue time and
+not-before (`nbf`) when present. Access tokens with a lifetime longer than one
+hour are rejected; clock skew is limited to 30 seconds. JWKS is cached for five
+minutes to allow key rotation without a network fetch on every request.
 
 Automated security coverage exercises the real PAPER route dependency with
 short-lived test JWTs: invalid signatures (including a different key with the
