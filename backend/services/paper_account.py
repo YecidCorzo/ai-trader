@@ -1,4 +1,4 @@
-"""Persistent capital ledger and fail-closed PAPER mark-to-market equity."""
+"""Persistent capital ledger and fail-closed PAPER net-liquidation equity."""
 from __future__ import annotations
 
 import hashlib
@@ -311,7 +311,7 @@ class PaperAccountService:
     def calculate_equity(
         self, account_id: str, *, now: datetime | None = None,
     ) -> Decimal:
-        """Recompute equity only from persisted account events and price snapshots."""
+        """Recompute net-liquidation equity from persisted events and fresh price snapshots."""
         self.get_account(account_id)
         checked_at = _utc(now)
         rows = self._connection.execute(
