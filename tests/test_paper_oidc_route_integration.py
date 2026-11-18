@@ -91,7 +91,7 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
             "exp": now + 300 if expires_at is None else expires_at,
         }
         key = self.private_key if signing_key is None else signing_key
-        encode_key = "" if algorithm == "none" else key
+        encode_key = "" if algorithm == "none" else ("route-test-hmac-secret" if algorithm == "HS256" else key)
         return jwt.encode(
             claims, encode_key, algorithm=algorithm, headers={"kid": kid},
         )
