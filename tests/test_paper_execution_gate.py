@@ -255,6 +255,19 @@ class PaperExecutionGateTests(unittest.TestCase):
                 self.assertEqual(closed["status"], "CLOSED")
                 self.assertEqual(equity_before_close, equity_after_close)
 
+    def test_invalid_adverse_exit_fill_is_not_reported_as_bad_metadata(self):
+        self.open_position()
+        now = datetime.now(timezone.utc)
+        self.accounts.persist_price_quotes(
+            [PriceQuote(
+                symbol="SOLUSDT", price=Decimal("0.00000001"),
+                source="test-fixture", retrieved_at=now,
+            )],
+            now=now,
+        )
+        with self.assertRaisesRegex(PaperAccountError, "Cotización/fill inválido"):
+            self.accounts.calculate_equity(self.account["id"], now=now)
+
     def test_requested_exit_fee_is_used_for_manual_and_stop_closes(self):
         for close_by_stop in (False, True):
             with self.subTest(close_by_stop=close_by_stop):
