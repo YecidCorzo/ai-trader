@@ -236,6 +236,24 @@ class PaperExecutionGateTests(unittest.TestCase):
         self.assertEqual(Decimal(events[0]["amount"]), expected_net.quantize(Decimal("0.00000001")))
         self.assertEqual(events[0]["idempotency_key"], f"trade-close:{trade['id']}")
 
+    def test_net_liquidation_equity_matches_immediate_close_for_long_and_short(self):
+        for side, stop_price in (("LONG", "95"), ("SHORT", "105")):
+            with self.subTest(side=side):
+                trade = self.open_position(
+                    side=side,
+                    stop_price=stop_price,
+                    idempotency_key=f"net-equity-{side.lower()}",
+                )
+                equity_before_close = self.accounts.get_equity(self.account["id"])
+                closed = self.execution.close_position(
+                    trade["id"],
+                    account_id=self.account["id"],
+                    principal=self.principal,
+                )
+                equity_after_close = self.accounts.get_equity(self.account["id"])
+                self.assertEqual(closed["status"], "CLOSED")
+                self.assertEqual(equity_before_close, equity_after_close)
+
     def test_exit_price_is_market_sourced_and_account_scoped(self):
         trade = self.open_position()
         with self.assertRaises(TypeError):
