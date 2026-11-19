@@ -4,6 +4,8 @@ import os
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +14,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from backend.api.paper_routes import get_price_provider
+from backend.services.paper_price import PriceQuote
 from backend.security.dependencies import clear_oidc_verifier_cache
 from backend.security.oidc_verifier import _get_jwks_client
 
@@ -38,6 +42,19 @@ class FakeJwksClient:
         if header.get("kid") != KEY_ID:
             raise ValueError("Unknown test signing key")
         return FakeSigningKey(self.public_key)
+
+
+
+class FixedPriceProvider:
+    """Fixed public-price substitute for deterministic route tests."""
+
+    def get_price(self, symbol):
+        return PriceQuote(
+            symbol=symbol,
+            price=Decimal("100"),
+            source="fixed-route-test",
+            retrieved_at=datetime.now(timezone.utc),
+        )
 
 
 class PaperOidcRouteIntegrationTests(unittest.TestCase):
@@ -123,6 +140,172 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 401, response.text)
                 self.assertNotEqual(response.status_code, 500)
+
+    def test_owner_cannot_mutate_or_operate_on_another_users_account(self):
+        owner_a_token = self.token("owner-a")
+        owner_b_token = self.token("owner-b")
+        created = self.client.post(
+            "/api/paper/accounts",
+            headers={"Authorization": f"Bearer {owner_a_token}"},
+            json={
+                "name": "Cross-owner mutation guard",
+                "quote_currency": "USDT",
+                "opening_capital": "2500",
+                "idempotency_key": "cross-owner-opening-a",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        account_id = created.json()["account"]["id"]
+        owner_b_headers = {"Authorization": f"Bearer {owner_b_token}"}
+
+        requests = [
+            ("list-trades", "GET", f"/api/paper/accounts/{account_id}/trades", None),
+            ("open-trade", "POST", f"/api/paper/accounts/{account_id}/trades", {
+                "symbol": "SOLUSDT",
+                "strategy": "cross-owner-test",
+                "side": "LONG",
+                "stop_price": "100",
+                "idempotency_key": "cross-owner-trade-b",
+            }),
+            ("close-trade", "POST", f"/api/paper/accounts/{account_id}/trades/known-trade-id/close", {
+                "exit_fee": "0",
+            }),
+            ("fund-account", "POST", f"/api/paper/accounts/{account_id}/funding", {
+                "event_type": "DEPOSIT",
+                "amount": "100",
+                "idempotency_key": "cross-owner-funding-b",
+            }),
+            ("read-risk", "GET", f"/api/paper/accounts/{account_id}/risk", None),
+            ("halt-account", "POST", f"/api/paper/accounts/{account_id}/halt", {
+                "reason": "cross-owner authorization regression",
+            }),
+            ("reset-account", "POST", f"/api/paper/accounts/{account_id}/reset", {
+                "confirmed": True,
+            }),
+            ("read-events", "GET", f"/api/paper/accounts/{account_id}/events", None),
+        ]
+
+        for case, method, url, payload in requests:
+            with self.subTest(operation=case):
+                response = self.client.request(
+                    method,
+                    url,
+                    headers=owner_b_headers,
+                    json=payload,
+                )
+                self.assertEqual(response.status_code, 404, response.text)
+
+        owner_a_read = self.client.get(
+            f"/api/paper/accounts/{account_id}",
+            headers={"Authorization": f"Bearer {owner_a_token}"},
+        )
+        self.assertEqual(owner_a_read.status_code, 200, owner_a_read.text)
+        self.assertEqual(owner_a_read.json()["balance"], "2500.00000000")
+
+
+    def test_cross_owner_close_requires_real_trade_and_hides_account_mismatch(self):
+        app.dependency_overrides[get_price_provider] = FixedPriceProvider
+        try:
+            owner_a_token = self.token("owner-a")
+            owner_b_token = self.token("owner-b")
+            owner_a_headers = {"Authorization": f"Bearer {owner_a_token}"}
+            owner_b_headers = {"Authorization": f"Bearer {owner_b_token}"}
+
+            account_a_response = self.client.post(
+                "/api/paper/accounts",
+                headers=owner_a_headers,
+                json={
+                    "name": "Owner A close isolation",
+                    "quote_currency": "USDT",
+                    "opening_capital": "2500",
+                    "idempotency_key": "owner-a-close-isolation",
+                },
+            )
+            self.assertEqual(account_a_response.status_code, 201, account_a_response.text)
+            account_a = account_a_response.json()["account"]["id"]
+
+            account_b_response = self.client.post(
+                "/api/paper/accounts",
+                headers=owner_b_headers,
+                json={
+                    "name": "Owner B close isolation",
+                    "quote_currency": "USDT",
+                    "opening_capital": "2500",
+                    "idempotency_key": "owner-b-close-isolation",
+                },
+            )
+            self.assertEqual(account_b_response.status_code, 201, account_b_response.text)
+            account_b = account_b_response.json()["account"]["id"]
+
+            opened = self.client.post(
+                f"/api/paper/accounts/{account_a}/trades",
+                headers=owner_a_headers,
+                json={
+                    "symbol": "SOLUSDT",
+                    "strategy": "cross-owner-close-test",
+                    "side": "LONG",
+                    "stop_price": "95",
+                    "idempotency_key": "owner-a-real-trade",
+                },
+            )
+            self.assertEqual(opened.status_code, 201, opened.text)
+            trade_id = opened.json()["trade"]["id"]
+
+            risk_before = self.client.get(
+                f"/api/paper/accounts/{account_a}/risk",
+                headers=owner_a_headers,
+            )
+            self.assertEqual(risk_before.status_code, 200, risk_before.text)
+
+            close_payload = {"exit_fee": "0"}
+            # (a) B cannot close A's actual trade through A's account.
+            close_on_a = self.client.post(
+                f"/api/paper/accounts/{account_a}/trades/{trade_id}/close",
+                headers=owner_b_headers,
+                json=close_payload,
+            )
+            self.assertEqual(close_on_a.status_code, 404, close_on_a.text)
+
+            # (b) B cannot pair A's real trade ID with B's own account.
+            # The API must not disclose whether the foreign trade exists.
+            close_on_b = self.client.post(
+                f"/api/paper/accounts/{account_b}/trades/{trade_id}/close",
+                headers=owner_b_headers,
+                json=close_payload,
+            )
+            self.assertEqual(close_on_b.status_code, 404, close_on_b.text)
+
+            # Failed cross-owner halt/reset attempts must not alter A's breaker.
+            halt = self.client.post(
+                f"/api/paper/accounts/{account_a}/halt",
+                headers=owner_b_headers,
+                json={"reason": "cross-owner breaker isolation"},
+            )
+            self.assertEqual(halt.status_code, 404, halt.text)
+            reset = self.client.post(
+                f"/api/paper/accounts/{account_a}/reset",
+                headers=owner_b_headers,
+                json={"confirmed": True},
+            )
+            self.assertEqual(reset.status_code, 404, reset.text)
+
+            risk_after = self.client.get(
+                f"/api/paper/accounts/{account_a}/risk",
+                headers=owner_a_headers,
+            )
+            self.assertEqual(risk_after.status_code, 200, risk_after.text)
+            self.assertEqual(risk_after.json(), risk_before.json())
+
+            # The real position remains open after all denied attempts.
+            owner_a_trades = self.client.get(
+                f"/api/paper/accounts/{account_a}/trades",
+                headers=owner_a_headers,
+                params={"status": "OPEN"},
+            )
+            self.assertEqual(owner_a_trades.status_code, 200, owner_a_trades.text)
+            self.assertEqual([trade["id"] for trade in owner_a_trades.json()["trades"]], [trade_id])
+        finally:
+            app.dependency_overrides.pop(get_price_provider, None)
 
     def test_paper_routes_verify_rs256_identity_and_enforce_owner_scope(self):
         missing_token = self.client.get("/api/paper/accounts")
