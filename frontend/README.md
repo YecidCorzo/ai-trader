@@ -12,9 +12,10 @@ Dashboard web servido por FastAPI en `/dashboard`.
 
 ## Ejecutar localmente en macOS
 
-Desde la raíz del repositorio, instala dependencias en el entorno virtual del proyecto:
+Desde la raíz del repositorio, crea el entorno virtual (solo la primera vez) e instala las dependencias:
 
 ```sh
+python3 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
 ```
 
