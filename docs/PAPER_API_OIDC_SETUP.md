@@ -15,7 +15,7 @@ OIDC provider and configure the exact issuer, audience and public JWKS URL:
 export AI_TRADER_OIDC_ISSUER="https://YOUR-ISSUER/"
 export AI_TRADER_OIDC_AUDIENCE="ai-trader-paper"
 export AI_TRADER_OIDC_JWKS_URL="https://YOUR-ISSUER/.well-known/jwks.json"
-# Optional: default 3600; allowed range 60–3600 seconds.
+# Optional: default 3600; allowed range 60–86400 seconds.
 export AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS="3600"
 ```
 
@@ -24,11 +24,12 @@ must be signed with RS256 and contain `iss`, `sub`, `aud`, `iat` and `exp`.
 The verifier checks signature, exact issuer, audience, expiry, issue time and
 not-before (`nbf`) when present. The maximum access-token lifetime is
 configurable with `AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS`: it defaults to
-3600 seconds, accepts integer values from 60 through 3600, and has an explicit
-hard ceiling of 3600 seconds. A token whose `exp - iat` exceeds the configured
+3600 seconds, accepts integer values from 60 through 86400, and has an explicit
+hard ceiling of 86400 seconds. A token whose `exp - iat` exceeds the configured
 maximum is rejected; `exp` must also be strictly greater than `iat`. This
-allows providers with shorter access-token lifetimes while retaining a
-one-hour security ceiling. Clock skew is limited to 30 seconds. JWKS is cached
+allows shorter-lived tokens by default while supporting providers whose
+configured access-token lifetime is up to 24 hours. The default remains one
+hour unless the operator explicitly raises the limit. Clock skew is limited to 30 seconds. JWKS is cached
 for five minutes to allow key rotation without a network fetch on every
 request.
 

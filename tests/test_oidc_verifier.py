@@ -103,13 +103,39 @@ class OIDCVerifierTests(unittest.TestCase):
         ):
             self.assertEqual(OIDCJWTVerifier.from_env().max_token_lifetime_seconds, 1800)
 
+    def test_configured_maximum_allows_provider_tokens_up_to_24_hours(self):
+        now = int(time.time())
+        verifier = OIDCJWTVerifier(
+            issuer="https://identity.example.test/",
+            audience="ai-trader-paper",
+            jwks_url="https://identity.example.test/.well-known/jwks.json",
+            jwks_client=FakeJwksClient(self.public_key),
+            max_token_lifetime_seconds=86400,
+        )
+        self.assertEqual(
+            verifier.verify(self.token(iat=now, exp=now + 86400)).subject,
+            "user-123",
+        )
+        with self.assertRaises(InvalidBearerToken):
+            verifier.verify(self.token(iat=now, exp=now + 86401))
+
+    def test_from_env_accepts_explicit_24_hour_provider_lifetime(self):
+        env = {
+            "AI_TRADER_OIDC_ISSUER": "https://identity.example.test/",
+            "AI_TRADER_OIDC_AUDIENCE": "ai-trader-paper",
+            "AI_TRADER_OIDC_JWKS_URL": "https://identity.example.test/.well-known/jwks.json",
+            "AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS": "86400",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(OIDCJWTVerifier.from_env().max_token_lifetime_seconds, 86400)
+
     def test_from_env_rejects_invalid_token_lifetime_configuration(self):
         env = {
             "AI_TRADER_OIDC_ISSUER": "https://identity.example.test/",
             "AI_TRADER_OIDC_AUDIENCE": "ai-trader-paper",
             "AI_TRADER_OIDC_JWKS_URL": "https://identity.example.test/.well-known/jwks.json",
         }
-        for value in ("59", "3601", "not-an-integer", "1.5"):
+        for value in ("59", "86401", "not-an-integer", "1.5"):
             with self.subTest(value=value):
                 with patch.dict(
                     "os.environ",
