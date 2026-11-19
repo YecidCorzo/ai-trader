@@ -18,7 +18,7 @@ provider-neutral JWT/JWKS verifier, not a complete provider integration.
 No real OIDC provider has yet been configured and exercised end to end. The
 active verifier now enforces a configurable access-token lifetime through
 `AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS` (default 3600 seconds; accepted
-range 60–3600 seconds; hard ceiling 3600 seconds), requires `exp > iat`, and
+range 60–86400 seconds; hard ceiling 86400 seconds), requires `exp > iat`, and
 validates `nbf` when present. Token/session revocation, provider introspection,
 and required `auth_time` or a maximum authentication age are not implemented.
 The verifier uses a configured JWKS URL; OIDC discovery and browser
@@ -62,7 +62,7 @@ requires `exp`, `iat`, `iss`, `sub` and `aud`, checks signature/issuer/
 audience/time claims, validates `nbf` when present, and rejects malformed or
 oversized bearer tokens. The maximum `exp - iat` lifetime is configured by
 `AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS`: default 3600 seconds, minimum 60,
-hard maximum 3600. `exp` must be strictly greater than `iat`. Raw tokens are
+hard maximum 86400. `exp` must be strictly greater than `iat`. Raw tokens are
 not persisted in PAPER application tables.
 
 The following are **not currently implemented by the active verifier** and must
