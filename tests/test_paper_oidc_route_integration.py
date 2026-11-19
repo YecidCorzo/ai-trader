@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -50,7 +51,7 @@ class FixedPriceProvider:
     def get_price(self, symbol):
         return PriceQuote(
             symbol=symbol,
-            price=100,
+            price=Decimal("100"),
             source="fixed-route-test",
             retrieved_at=datetime.now(timezone.utc),
         )
