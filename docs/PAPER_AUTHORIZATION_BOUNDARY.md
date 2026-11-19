@@ -16,11 +16,13 @@ provider-neutral JWT/JWKS verifier, not a complete provider integration.
 
 **Release status: BLOCKED pending provider-backed acceptance and security closure.**
 No real OIDC provider has yet been configured and exercised end to end. The
-current verifier does not implement token/session revocation, provider introspection,
-or an explicit maximum access-token lifetime. Authentication time (`auth_time`)
-is not required. These are open security decisions, not capabilities to assume.
-The verifier uses a configured JWKS URL; OIDC discovery and browser Authorization
-Code + PKCE are not implemented by the API.
+active verifier now enforces a configurable access-token lifetime through
+`AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS` (default 3600 seconds; accepted
+range 60–3600 seconds; hard ceiling 3600 seconds), requires `exp > iat`, and
+validates `nbf` when present. Token/session revocation, provider introspection,
+and required `auth_time` or a maximum authentication age are not implemented.
+The verifier uses a configured JWKS URL; OIDC discovery and browser
+Authorization Code + PKCE are not implemented by the API.
 
 ## Security invariants
 
@@ -57,21 +59,23 @@ It does not contain the raw credential.
 
 The active verifier requires HTTPS issuer/JWKS configuration, permits RS256 only,
 requires `exp`, `iat`, `iss`, `sub` and `aud`, checks signature/issuer/
-audience/time claims, and rejects malformed or oversized bearer tokens. Raw tokens
-are not persisted in PAPER application tables.
+audience/time claims, validates `nbf` when present, and rejects malformed or
+oversized bearer tokens. The maximum `exp - iat` lifetime is configured by
+`AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS`: default 3600 seconds, minimum 60,
+hard maximum 3600. `exp` must be strictly greater than `iat`. Raw tokens are
+not persisted in PAPER application tables.
 
 The following are **not currently implemented by the active verifier** and must
 not be represented as covered:
 - provider session or token revocation checks;
 - OAuth token introspection or a revocation/denylist store;
-- an explicit maximum permitted `exp - iat` lifetime;
 - required `auth_time` or a maximum authentication age;
 - OIDC discovery and provider-specific browser sign-in/session handling.
 
-Before release, choose and document a revocation strategy. If short-lived access
-tokens are used instead of per-request introspection, define and enforce a maximum
-token lifetime and document the residual revocation window. Provider outage and
-JWKS key-rotation behavior must be exercised with the selected provider.
+The access-token lifetime ceiling is implemented, but it does not revoke a token
+before expiry. Before release, choose and document a revocation strategy and its
+residual exposure window. Provider outage, JWKS outage and key-rotation behavior
+must be exercised with the selected provider.
 
 ## Ownership persistence
 
@@ -104,24 +108,31 @@ accept account IDs as proof of identity.
 - Verifier unit tests cover valid RS256 identity, expired token, wrong audience,
   wrong issuer, missing subject, HS256/none rejection, malformed/empty/oversized
   token, JWKS client reuse, missing configuration (503), missing Bearer (401),
-  and HTTPS configuration.
+  HTTPS configuration, `nbf` rejection, exact 3600-second lifetime acceptance,
+  3601-second rejection, `exp == iat` rejection, and environment range/default
+  validation for the configurable lifetime ceiling.
 - Route-level tests use ephemeral RSA keys, an in-process deterministic JWKS
   resolver and temporary SQLite. They exercise missing credentials, invalid
   signature (including same `kid`), wrong issuer/audience, expired token,
   unknown `kid`, unsupported algorithms, malformed token, account creation/read,
-  and cross-owner read isolation.
+  and cross-owner isolation across PAPER mutation routes. The close regression
+  opens a real A-owned test trade and verifies that B receives 404 both when
+  closing it through A's account and when pairing A's trade ID with B's account;
+  failed cross-owner halt/reset attempts leave A's breaker unchanged.
+- Funding transaction concurrency and rollback are tested at the service/SQLite
+  boundary using independent connections. This is not yet a concurrent
+  end-to-end API-boundary test.
 - These tests are hermetic. They do not prove real provider discovery, external
-  TLS/JWKS delivery, browser PKCE, provider session behavior, revocation, or the
-  full set of cross-owner write operations.
+  TLS/JWKS delivery, browser PKCE, provider session behavior, revocation, or
+  provider outage behavior.
 
 Additional tests required before release:
 - provider-backed token issuance and JWKS/TLS/key-rotation acceptance;
-- explicit maximum token lifetime and the chosen revocation/session policy;
-- not-yet-valid token and provider/JWKS outage behavior;
-- cross-owner attempts to close, fund, halt and reset, plus trade-ID/account-ID
-  mismatch cases;
+- a documented revocation/session policy and its residual exposure window;
+- provider/JWKS outage behavior with the selected real provider;
 - caller-supplied `owner_id` and `X-User-Id` spoofing at the actual API boundary;
-- concurrent idempotency and funding replay behavior at the API boundary;
+- concurrent idempotency and funding replay behavior at the API boundary (current
+  #119 coverage is service/SQLite-level, not concurrent HTTP route coverage);
 - verification that legacy unowned accounts remain inaccessible.
 
 ## Provider-backed acceptance gate
