@@ -445,5 +445,60 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(account.json()["balance"], "1000.00000000")
 
 
+
+    def test_funding_idempotency_is_enforced_at_http_boundary(self):
+        headers = {"Authorization": f"Bearer {self.token('owner-funding-idempotency')}"}
+        account_response = self.client.post(
+            "/api/paper/accounts",
+            headers=headers,
+            json={
+                "name": "HTTP funding idempotency",
+                "quote_currency": "USDT",
+                "opening_capital": "1000",
+                "idempotency_key": "funding-idempotency-opening",
+            },
+        )
+        self.assertEqual(account_response.status_code, 201, account_response.text)
+        account_id = account_response.json()["account"]["id"]
+        url = f"/api/paper/accounts/{account_id}/funding"
+        payload = {
+            "event_type": "DEPOSIT",
+            "amount": "100",
+            "idempotency_key": "http-funding-replay",
+        }
+
+        first = self.client.post(url, headers=headers, json=payload)
+        self.assertEqual(first.status_code, 200, first.text)
+        replay = self.client.post(url, headers=headers, json=payload)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["event"]["id"], first.json()["event"]["id"])
+
+        conflict = self.client.post(
+            url,
+            headers=headers,
+            json={**payload, "amount": "150"},
+        )
+        self.assertEqual(conflict.status_code, 422, conflict.text)
+
+        events = self.client.get(
+            f"/api/paper/accounts/{account_id}/events",
+            headers=headers,
+        )
+        self.assertEqual(events.status_code, 200, events.text)
+        deposits = [
+            event for event in events.json()["account_events"]
+            if event["event_type"] == "DEPOSIT"
+        ]
+        self.assertEqual(len(deposits), 1)
+        self.assertEqual(deposits[0]["amount"], "100.00000000")
+
+        account = self.client.get(
+            f"/api/paper/accounts/{account_id}",
+            headers=headers,
+        )
+        self.assertEqual(account.status_code, 200, account.text)
+        self.assertEqual(account.json()["balance"], "1100.00000000")
+
+
 if __name__ == "__main__":
     unittest.main()
