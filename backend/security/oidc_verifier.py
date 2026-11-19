@@ -36,7 +36,7 @@ def _get_jwks_client(jwks_url: str) -> PyJWKClient:
 @dataclass(frozen=True)
 class OIDCJWTVerifier:
     MIN_TOKEN_LIFETIME_SECONDS = 60
-    MAX_TOKEN_LIFETIME_SECONDS = 3600
+    MAX_TOKEN_LIFETIME_SECONDS = 86400
 
     issuer: str
     audience: str
@@ -56,7 +56,7 @@ class OIDCJWTVerifier:
             or self.max_token_lifetime_seconds < self.MIN_TOKEN_LIFETIME_SECONDS
             or self.max_token_lifetime_seconds > self.MAX_TOKEN_LIFETIME_SECONDS
         ):
-            raise OIDCConfigurationError("OIDC token lifetime máximo debe estar entre 60 y 3600 segundos")
+            raise OIDCConfigurationError("OIDC token lifetime máximo debe estar entre 60 y 86400 segundos")
         if self.jwks_client is None and (
             not self.issuer.startswith("https://")
             or not self.jwks_url.startswith("https://")
@@ -81,7 +81,7 @@ class OIDCJWTVerifier:
             max_token_lifetime_seconds = int(raw_max_lifetime)
         except (TypeError, ValueError):
             raise OIDCConfigurationError(
-                "AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS debe ser un entero entre 60 y 3600"
+                "AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS debe ser un entero entre 60 y 86400"
             ) from None
         if not (
             cls.MIN_TOKEN_LIFETIME_SECONDS
