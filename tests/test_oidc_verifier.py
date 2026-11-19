@@ -73,6 +73,56 @@ class OIDCVerifierTests(unittest.TestCase):
         with self.assertRaises(InvalidBearerToken):
             verifier.verify(self.token(aud="another-api"))
 
+    def test_exact_maximum_lifetime_is_accepted_and_one_second_over_is_rejected(self):
+        now = int(time.time())
+        verifier = self.verifier()
+        self.assertEqual(
+            verifier.verify(self.token(iat=now, exp=now + 3600)).subject,
+            "user-123",
+        )
+        with self.assertRaises(InvalidBearerToken):
+            verifier.verify(self.token(iat=now, exp=now + 3601))
+
+    def test_exp_equal_to_iat_is_rejected(self):
+        now = int(time.time())
+        with self.assertRaises(InvalidBearerToken):
+            self.verifier().verify(self.token(iat=now, exp=now))
+
+    def test_from_env_defaults_to_one_hour_and_accepts_configured_lower_limit(self):
+        env = {
+            "AI_TRADER_OIDC_ISSUER": "https://identity.example.test/",
+            "AI_TRADER_OIDC_AUDIENCE": "ai-trader-paper",
+            "AI_TRADER_OIDC_JWKS_URL": "https://identity.example.test/.well-known/jwks.json",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(OIDCJWTVerifier.from_env().max_token_lifetime_seconds, 3600)
+        with patch.dict(
+            "os.environ",
+            {**env, "AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS": "1800"},
+            clear=True,
+        ):
+            self.assertEqual(OIDCJWTVerifier.from_env().max_token_lifetime_seconds, 1800)
+
+    def test_from_env_rejects_invalid_token_lifetime_configuration(self):
+        env = {
+            "AI_TRADER_OIDC_ISSUER": "https://identity.example.test/",
+            "AI_TRADER_OIDC_AUDIENCE": "ai-trader-paper",
+            "AI_TRADER_OIDC_JWKS_URL": "https://identity.example.test/.well-known/jwks.json",
+        }
+        for value in ("59", "3601", "not-an-integer", "1.5"):
+            with self.subTest(value=value):
+                with patch.dict(
+                    "os.environ",
+                    {**env, "AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS": value},
+                    clear=True,
+                ):
+                    with self.assertRaises(OIDCConfigurationError):
+                        OIDCJWTVerifier.from_env()
+
+    def test_not_yet_valid_tokens_are_rejected(self):
+        with self.assertRaises(InvalidBearerToken):
+            self.verifier().verify(self.token(nbf=int(time.time()) + 300))
+
     def test_wrong_issuer_is_rejected(self):
         with self.assertRaises(InvalidBearerToken):
             self.verifier().verify(self.token(iss="https://attacker.example/"))
