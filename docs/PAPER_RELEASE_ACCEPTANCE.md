@@ -128,6 +128,15 @@ curl -fsS "$AI_TRADER_BASE_URL/api/paper/accounts/$ACCOUNT_ID/risk" \
 - [ ] A second OIDC test identity cannot list, read, trade, fund, halt or reset the first identity's account (resources should be indistinguishable from not found).
 - [ ] Missing/stale market data blocks valuation/execution instead of reusing stale prices.
 
+### Automated ledger concurrency coverage
+
+CI exercises funding writes against one persistent SQLite database file using
+separate connections: concurrent requests with the same idempotency key must
+produce one ledger event, competing withdrawals must not spend the same free
+cash twice, and an injected funding-event write failure must leave the balance
+unchanged. These tests verify SQLite transaction serialization and rollback;
+they do not claim distributed locking or multi-database coordination.
+
 ## 5. Dashboard boundary
 
 Open `/dashboard/` and verify:
