@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -388,6 +389,138 @@ class PaperExecutionGateTests(unittest.TestCase):
                 self.account["id"], event_type="DEPOSIT", amount="300",
                 idempotency_key="deposit-1",
             )
+
+    def test_concurrent_duplicate_funding_creates_one_ledger_event(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = str(Path(directory) / "paper-funding-idempotency.sqlite3")
+            setup = connect_database(database_path)
+            apply_migrations(setup)
+            accounts = PaperAccountService(setup, FakePriceProvider())
+            account = accounts.create_account(
+                name="Concurrent funding", quote_currency="USDT",
+                opening_capital="1000", idempotency_key="funding-concurrent-opening",
+                principal=self.principal,
+            )
+            setup.close()
+            barrier = Barrier(2)
+
+            def deposit():
+                connection = connect_database(database_path)
+                try:
+                    service = PaperAccountService(connection, FakePriceProvider())
+                    barrier.wait(timeout=5)
+                    return service.record_funding(
+                        account["id"], event_type="DEPOSIT", amount="250",
+                        idempotency_key="same-concurrent-deposit",
+                    )
+                finally:
+                    connection.close()
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _: deposit(), range(2)))
+
+            self.assertEqual(results[0]["id"], results[1]["id"])
+            verify = connect_database(database_path)
+            try:
+                self.assertEqual(
+                    verify.execute(
+                        """SELECT COUNT(*) FROM paper_account_events
+                           WHERE account_id = ? AND event_type = 'DEPOSIT'
+                             AND idempotency_key = ?""",
+                        (account["id"], "same-concurrent-deposit"),
+                    ).fetchone()[0],
+                    1,
+                )
+                balance = sum(
+                    (Decimal(row["amount"]) for row in verify.execute(
+                        "SELECT amount FROM paper_account_events WHERE account_id = ?",
+                        (account["id"],),
+                    ).fetchall()),
+                    Decimal("0"),
+                )
+                self.assertEqual(balance, Decimal("1250"))
+            finally:
+                verify.close()
+
+    def test_concurrent_withdrawals_cannot_spend_the_same_free_cash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = str(Path(directory) / "paper-funding-withdrawals.sqlite3")
+            setup = connect_database(database_path)
+            apply_migrations(setup)
+            accounts = PaperAccountService(setup, FakePriceProvider())
+            account = accounts.create_account(
+                name="Concurrent withdrawals", quote_currency="USDT",
+                opening_capital="1000", idempotency_key="withdrawal-concurrent-opening",
+                principal=self.principal,
+            )
+            setup.close()
+            barrier = Barrier(2)
+
+            def withdraw(key):
+                connection = connect_database(database_path)
+                try:
+                    service = PaperAccountService(connection, FakePriceProvider())
+                    barrier.wait(timeout=5)
+                    try:
+                        event = service.record_funding(
+                            account["id"], event_type="WITHDRAWAL", amount="700",
+                            idempotency_key=key,
+                        )
+                        return ("accepted", event)
+                    except PaperAccountError as error:
+                        return ("rejected", str(error))
+                finally:
+                    connection.close()
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(withdraw, ("withdraw-a", "withdraw-b")))
+
+            self.assertEqual([result[0] for result in results].count("accepted"), 1)
+            self.assertEqual([result[0] for result in results].count("rejected"), 1)
+            verify = connect_database(database_path)
+            try:
+                self.assertEqual(
+                    verify.execute(
+                        """SELECT COUNT(*) FROM paper_account_events
+                           WHERE account_id = ? AND event_type = 'WITHDRAWAL'""",
+                        (account["id"],),
+                    ).fetchone()[0],
+                    1,
+                )
+                balance = sum(
+                    (Decimal(row["amount"]) for row in verify.execute(
+                        "SELECT amount FROM paper_account_events WHERE account_id = ?",
+                        (account["id"],),
+                    ).fetchall()),
+                    Decimal("0"),
+                )
+                self.assertEqual(balance, Decimal("300"))
+            finally:
+                verify.close()
+
+    def test_funding_event_write_failure_rolls_back_balance_change(self):
+        self.connection.execute("""
+            CREATE TRIGGER fail_paper_deposit
+            BEFORE INSERT ON paper_account_events
+            WHEN NEW.event_type = 'DEPOSIT'
+            BEGIN SELECT RAISE(ABORT, 'injected funding event failure'); END
+        """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.accounts.record_funding(
+                self.account["id"], event_type="DEPOSIT", amount="125",
+                idempotency_key="rollback-funding-event",
+            )
+
+        self.assertFalse(self.connection.in_transaction)
+        self.assertEqual(self.accounts._balance(self.account["id"]), Decimal("10000"))
+        self.assertEqual(
+            self.connection.execute(
+                """SELECT COUNT(*) FROM paper_account_events
+                   WHERE account_id = ? AND idempotency_key = ?""",
+                (self.account["id"], "rollback-funding-event"),
+            ).fetchone()[0],
+            0,
+        )
 
     def test_account_events_reject_insert_or_replace_and_currency_mismatch(self):
         event = self.connection.execute(
