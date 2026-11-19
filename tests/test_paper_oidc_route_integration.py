@@ -347,5 +347,57 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(wrong_audience.status_code, 401)
 
 
+
+    def test_client_supplied_identity_cannot_override_verified_oidc_principal(self):
+        owner_a_token = self.token("owner-a")
+        owner_b_token = self.token("owner-b")
+        spoofed_headers = {
+            "Authorization": f"Bearer {owner_a_token}",
+            "X-User-Id": "owner-b",
+            "X-Owner-Id": "owner-b",
+        }
+        created = self.client.post(
+            "/api/paper/accounts",
+            headers=spoofed_headers,
+            json={
+                "name": "Identity source regression",
+                "quote_currency": "USDT",
+                "opening_capital": "1000",
+                "idempotency_key": "identity-source-owner-a",
+                "owner_id": "owner-b",
+                "owner_issuer": ISSUER,
+                "owner_subject": "owner-b",
+                "user_id": "owner-b",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        account_id = created.json()["account"]["id"]
+
+        # The verified bearer token is the sole source of identity. Spoofed
+        # headers and extra JSON fields must not transfer ownership to B.
+        owner_a_accounts = self.client.get(
+            "/api/paper/accounts",
+            headers={"Authorization": f"Bearer {owner_a_token}"},
+        )
+        self.assertEqual(owner_a_accounts.status_code, 200, owner_a_accounts.text)
+        self.assertEqual(
+            [account["id"] for account in owner_a_accounts.json()["accounts"]],
+            [account_id],
+        )
+
+        owner_b_accounts = self.client.get(
+            "/api/paper/accounts",
+            headers={"Authorization": f"Bearer {owner_b_token}"},
+        )
+        self.assertEqual(owner_b_accounts.status_code, 200, owner_b_accounts.text)
+        self.assertEqual(owner_b_accounts.json()["accounts"], [])
+
+        owner_b_read = self.client.get(
+            f"/api/paper/accounts/{account_id}",
+            headers={"Authorization": f"Bearer {owner_b_token}"},
+        )
+        self.assertEqual(owner_b_read.status_code, 404, owner_b_read.text)
+
+
 if __name__ == "__main__":
     unittest.main()
