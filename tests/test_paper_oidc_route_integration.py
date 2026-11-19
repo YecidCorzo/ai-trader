@@ -399,5 +399,51 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(owner_b_read.status_code, 404, owner_b_read.text)
 
 
+
+    def test_account_creation_idempotency_is_enforced_at_http_boundary(self):
+        headers = {"Authorization": f"Bearer {self.token('owner-idempotency')}"}
+        payload = {
+            "name": "HTTP idempotency acceptance",
+            "quote_currency": "USDT",
+            "opening_capital": "1000",
+            "idempotency_key": "http-account-create-idempotency",
+        }
+
+        first = self.client.post("/api/paper/accounts", headers=headers, json=payload)
+        self.assertEqual(first.status_code, 201, first.text)
+        account_id = first.json()["account"]["id"]
+
+        replay = self.client.post("/api/paper/accounts", headers=headers, json=payload)
+        self.assertEqual(replay.status_code, 201, replay.text)
+        self.assertEqual(replay.json()["account"]["id"], account_id)
+
+        events = self.client.get(
+            f"/api/paper/accounts/{account_id}/events",
+            headers=headers,
+        )
+        self.assertEqual(events.status_code, 200, events.text)
+        opening_events = [
+            event for event in events.json()["account_events"]
+            if event["event_type"] == "OPENING_CAPITAL"
+        ]
+        self.assertEqual(len(opening_events), 1)
+        self.assertEqual(opening_events[0]["amount"], "1000.00000000")
+
+        conflicting_payload = {**payload, "opening_capital": "2000"}
+        conflict = self.client.post(
+            "/api/paper/accounts",
+            headers=headers,
+            json=conflicting_payload,
+        )
+        self.assertEqual(conflict.status_code, 422, conflict.text)
+
+        account = self.client.get(
+            f"/api/paper/accounts/{account_id}",
+            headers=headers,
+        )
+        self.assertEqual(account.status_code, 200, account.text)
+        self.assertEqual(account.json()["balance"], "1000.00000000")
+
+
 if __name__ == "__main__":
     unittest.main()
