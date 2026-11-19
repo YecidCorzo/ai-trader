@@ -10,13 +10,20 @@ Dashboard web servido por FastAPI en `/dashboard`.
 - Presentación de señal LONG/SHORT/NEUTRAL, puntuación, entrada de referencia, stop loss, take profits, invalidación y motivos.
 - Backtest histórico PAPER y validación walk-forward PAPER.
 
-## Ejecutar localmente
+## Ejecutar localmente en macOS
 
-Desde la raíz del repositorio, instala las dependencias y arranca el backend:
+Desde la raíz del repositorio, crea el entorno virtual (solo la primera vez) e instala las dependencias:
 
 ```sh
-python -m pip install -r requirements.txt
-PYTHONPATH=backend uvicorn main:app --host 127.0.0.1 --port 8000
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+```
+
+Arranca FastAPI desde `backend` usando ese mismo intérprete:
+
+```sh
+cd backend
+../.venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Abre:
@@ -29,7 +36,7 @@ El frontend usa rutas relativas (`/api/...`) para comunicarse con la misma insta
 
 ## Límite actual de integración PAPER
 
-El panel de análisis es de solo lectura. Consultar una señal no abre ni cierra operaciones. El saldo del dashboard general permanece sin configurar porque `/api/dashboard` es un placeholder deliberado.
+El panel de análisis es de solo lectura. Consultar una señal no abre ni cierra operaciones. El saldo del dashboard general permanece sin configurar porque `/api/dashboard` es un placeholder deliberado; la interfaz no inventa capital ni posiciones.
 
 La API persistente `/api/paper/*` requiere un proveedor OIDC real configurado en el backend y un token Bearer válido. Esta interfaz todavía no implementa inicio de sesión OIDC ni gestión autenticada de cuentas PAPER. Consulta `docs/PAPER_API_OIDC_SETUP.md` para la configuración y las pruebas de aceptación de la API. La secuencia completa de aceptación de release está en `docs/PAPER_RELEASE_ACCEPTANCE.md`.
 
