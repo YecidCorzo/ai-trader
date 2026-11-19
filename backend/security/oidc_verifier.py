@@ -89,7 +89,7 @@ class OIDCJWTVerifier:
             <= cls.MAX_TOKEN_LIFETIME_SECONDS
         ):
             raise OIDCConfigurationError(
-                "AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS debe estar entre 60 y 3600"
+                "AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS debe estar entre 60 y 86400"
             )
         return cls(
             issuer=issuer,
