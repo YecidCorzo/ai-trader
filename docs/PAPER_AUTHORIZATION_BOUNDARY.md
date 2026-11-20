@@ -50,7 +50,7 @@ environment and are recorded as completed work:
   `ai-trader-api` and `account`.
 - Authenticated API request returned HTTP 200; `/health` returned HTTP 200.
 
-No access token, client secret or private key is stored in this document.
+No access token, client secret or private key is stored in this document. The smoke-test result is operator-reported; no sanitized command transcript, CI artifact or other independently reviewable output was retained. Treat it as declared evidence without an attached artifact, not as independently reproducible proof.
 This evidence proves that the configured Keycloak token could be exchanged
 and accepted by the API in that development setup. It does **not** prove
 second-user account isolation with Keycloak, key rotation, provider/JWKS
