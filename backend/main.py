@@ -535,3 +535,68 @@ def run_walk_forward(
         raise
     except Exception:
         raise _internal_server_error("walk_forward_backtest") from None
+
+
+# Bitunix Futures is an additional read-only market-data source.
+# No private API, account, position, or order endpoints are used here.
+from services.bitunix_market_service import (
+    BitunixMarketDataError,
+    BitunixMarketService,
+)
+
+bitunix_market_service = BitunixMarketService("SOLUSDT")
+
+
+def _bitunix_market_data_http_error(error):
+    logger.warning("Bitunix market-data upstream failure: %s", type(error).__name__)
+    return HTTPException(
+        status_code=error.status_code,
+        detail="Proveedor Bitunix de datos de mercado no disponible",
+    )
+
+
+@app.get("/api/bitunix/price")
+def get_bitunix_price():
+    try:
+        price = bitunix_market_service.get_price()
+    except BitunixMarketDataError as error:
+        raise _bitunix_market_data_http_error(error) from None
+    return {
+        "symbol": "SOL/USDT",
+        "price": price,
+        "source": "Bitunix Futures",
+        "data_type": "real_market_data",
+        "mode": "paper",
+    }
+
+
+@app.get("/api/bitunix/candles")
+def get_bitunix_candles(
+    interval: str = Query("5m"),
+    limit: int = Query(100, ge=1, le=10000),
+):
+    try:
+        rows = bitunix_market_service.get_candles(
+            interval=interval, limit=limit, closed_only=True
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except BitunixMarketDataError as error:
+        raise _bitunix_market_data_http_error(error) from None
+    return {
+        "symbol": "SOL/USDT",
+        "interval": interval,
+        "source": "Bitunix Futures",
+        "candles": [
+            {
+                "time": int(row[0] / 1000),
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+                "volume": float(row[5]),
+            }
+            for row in rows
+        ],
+        "mode": "paper",
+    }
