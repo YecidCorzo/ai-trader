@@ -11,8 +11,11 @@ are not conditionally removed from the FastAPI application.
 The active verifier is `OIDCJWTVerifier` in
 `backend/security/oidc_verifier.py`. It uses a configured HTTPS issuer, audience
 and JWKS URL; validates RS256 signatures and required `iss`, `sub`, `aud`,
-`iat` and `exp` claims; and caches the JWKS client/key set. This is a
-provider-neutral JWT/JWKS verifier, not a complete provider integration.
+`iat` and `exp` claims; and caches the JWKS client/key set. Invalid or
+expired credentials return HTTP 401. A JWKS connection failure is classified
+as provider unavailability and returns HTTP 503, rather than incorrectly
+asking the user to re-authenticate with HTTP 401. This is a provider-neutral
+JWT/JWKS verifier, not a complete provider integration.
 
 **Release status: BLOCKED pending provider-backed acceptance and security closure.**
 No real OIDC provider has yet been configured and exercised end to end. The
@@ -119,6 +122,9 @@ accept account IDs as proof of identity.
   opens a real A-owned test trade and verifies that B receives 404 both when
   closing it through A's account and when pairing A's trade ID with B's account;
   failed cross-owner halt/reset attempts leave A's breaker unchanged.
+- A JWKS connection-failure regression verifies that the FastAPI PAPER boundary
+  returns HTTP 503 when the configured JWKS provider cannot be reached.
+  Invalid tokens and unknown signing keys remain HTTP 401.
 - Funding transaction concurrency and rollback are tested at the service/SQLite
   boundary using independent connections. This is not yet a concurrent
   end-to-end API-boundary test.
