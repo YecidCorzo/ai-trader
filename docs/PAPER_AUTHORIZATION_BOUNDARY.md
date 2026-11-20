@@ -11,8 +11,11 @@ HTTP 503. The routes are not conditionally removed from the FastAPI app.
 The active verifier is `OIDCJWTVerifier` in
 `backend/security/oidc_verifier.py`. It uses a configured HTTPS issuer,
 audience and JWKS URL; validates RS256 signatures and required `iss`, `sub`,
-`aud`, `iat` and `exp` claims; and caches the JWKS client/key set. This is a
-provider-neutral JWT/JWKS verifier, not a complete provider integration.
+`aud`, `iat` and `exp` claims; and caches the JWKS client/key set. Invalid or
+expired credentials return HTTP 401. A JWKS connection failure is classified
+as provider unavailability and returns HTTP 503, rather than incorrectly
+asking the user to re-authenticate with HTTP 401. This is a provider-neutral
+JWT/JWKS verifier, not a complete provider integration.
 
 **Release status: BLOCKED pending additional provider-backed acceptance and
 security closure.** A local Keycloak 26.8.2 integration smoke test was completed
@@ -170,6 +173,9 @@ added by merged PRs #122–#125:
   connection failure and invalid/non-positive quotes return HTTP 503 on
   account valuation and trade close, leaving the trade open and writing no
   realized-P&L event.
+- The JWKS connection-failure regression verifies that the FastAPI PAPER
+  boundary returns HTTP 503 when the configured JWKS provider cannot be
+  reached; malformed tokens and unknown signing keys remain HTTP 401.
 
 These tests are hermetic. Separately, the recorded Keycloak smoke test above
 proves one successful PKCE token exchange and authenticated API request. The
