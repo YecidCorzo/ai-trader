@@ -7,6 +7,7 @@ from functools import lru_cache
 
 import jwt
 from jwt import PyJWKClient, PyJWKClientError, PyJWTError
+from jwt.exceptions import PyJWKClientConnectionError
 
 try:
     from backend.security.principal import VerifiedPrincipal
@@ -20,6 +21,11 @@ class OIDCConfigurationError(ValueError):
 
 class InvalidBearerToken(ValueError):
     pass
+
+
+class OIDCProviderUnavailable(RuntimeError):
+    """The configured JWKS provider could not be reached to verify a token."""
+
 
 
 @lru_cache(maxsize=8)
@@ -142,5 +148,7 @@ class OIDCJWTVerifier:
             return VerifiedPrincipal(issuer=issuer, subject=subject)
         except InvalidBearerToken:
             raise
+        except PyJWKClientConnectionError:
+            raise OIDCProviderUnavailable("Proveedor JWKS OIDC no disponible") from None
         except (PyJWTError, PyJWKClientError, TypeError, ValueError, KeyError):
             raise InvalidBearerToken("Bearer token inválido o expirado") from None
