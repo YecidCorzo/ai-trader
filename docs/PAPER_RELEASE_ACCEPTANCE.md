@@ -16,8 +16,7 @@ If OIDC is not configured, the PAPER API must fail closed with HTTP 503. A reque
 
 ## Previously completed local Keycloak smoke test (2026-11-17)
 
-This is recorded evidence from the development environment, not a claim that
-the full release checklist has passed:
+This is an operator-declared result from the development environment. No sanitized command transcript or CI artifact was retained, so it is recorded as **declared, without an attached artifact**; it is not independently reviewable evidence and does not mean the full release checklist has passed:
 
 - Keycloak 26.8.2, realm `ai-trader`, issuer
   `https://localhost:8443/realms/ai-trader`.
