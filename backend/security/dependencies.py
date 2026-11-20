@@ -14,6 +14,7 @@ try:
 except ImportError:
     from security.oidc_verifier import (
         InvalidBearerToken, OIDCConfigurationError, OIDCJWTVerifier,
+        OIDCProviderUnavailable,
     )
 
 _bearer = HTTPBearer(auto_error=False)
