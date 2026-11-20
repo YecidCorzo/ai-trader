@@ -1,7 +1,13 @@
 """Provider-neutral OIDC JWT verification for PAPER API access."""
 from __future__ import annotations
 
+import copy
+import http.client
+import json
 import os
+import threading
+import time
+import urllib.error
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -27,11 +33,65 @@ class OIDCProviderUnavailable(RuntimeError):
     """The configured JWKS provider could not be reached to verify a token."""
 
 
+class ResilientPyJWKClient(PyJWKClient):
+    """Keep the last valid JWKS when a refresh fails; throttle unknown-kid refreshes."""
+
+    UNKNOWN_KID_REFRESH_INTERVAL_SECONDS = 60
+
+    def __init__(self, uri: str, **kwargs):
+        super().__init__(uri, **kwargs)
+        self._last_good_jwks = None
+        self._last_unknown_kid_refresh = 0.0
+        self._resilience_lock = threading.Lock()
+
+    def fetch_data(self):
+        try:
+            jwks = super().fetch_data()
+            if not isinstance(jwks, dict) or not isinstance(jwks.get("keys"), list):
+                raise OIDCProviderUnavailable("Respuesta JWKS no válida")
+            self._last_good_jwks = copy.deepcopy(jwks)
+            return jwks
+        except OIDCProviderUnavailable:
+            if self._last_good_jwks is not None:
+                return copy.deepcopy(self._last_good_jwks)
+            raise
+        except (
+            http.client.HTTPException,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            OSError,
+            urllib.error.URLError,
+            PyJWKClientConnectionError,
+        ):
+            if self._last_good_jwks is not None:
+                return copy.deepcopy(self._last_good_jwks)
+            raise OIDCProviderUnavailable("Proveedor JWKS OIDC no disponible") from None
+
+    def get_signing_key(self, kid: str):
+        signing_keys = self.get_signing_keys()
+        matching = [key for key in signing_keys if key.key_id == kid]
+        if not matching:
+            now = time.monotonic()
+            with self._resilience_lock:
+                should_refresh = (
+                    now - self._last_unknown_kid_refresh
+                    >= self.UNKNOWN_KID_REFRESH_INTERVAL_SECONDS
+                )
+                if should_refresh:
+                    self._last_unknown_kid_refresh = now
+            if should_refresh:
+                signing_keys = self.get_signing_keys(refresh=True)
+                matching = [key for key in signing_keys if key.key_id == kid]
+        if not matching:
+            raise PyJWKClientError("Unable to find a signing key that matches the token")
+        return matching[0]
+
+
 
 @lru_cache(maxsize=8)
 def _get_jwks_client(jwks_url: str) -> PyJWKClient:
     """Reuse the JWKS cache across requests for the same configured URL."""
-    return PyJWKClient(
+    return ResilientPyJWKClient(
         jwks_url,
         cache_jwk_set=True,
         lifespan=300,
@@ -148,7 +208,15 @@ class OIDCJWTVerifier:
             return VerifiedPrincipal(issuer=issuer, subject=subject)
         except InvalidBearerToken:
             raise
-        except PyJWKClientConnectionError:
+        except (
+            OIDCProviderUnavailable,
+            PyJWKClientConnectionError,
+            http.client.HTTPException,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            OSError,
+            urllib.error.URLError,
+        ):
             raise OIDCProviderUnavailable("Proveedor JWKS OIDC no disponible") from None
         except (PyJWTError, PyJWKClientError, TypeError, ValueError, KeyError):
             raise InvalidBearerToken("Bearer token inválido o expirado") from None
