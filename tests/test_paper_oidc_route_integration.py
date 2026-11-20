@@ -5,7 +5,7 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -600,6 +600,62 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(account.status_code, 200, account.text)
         self.assertEqual(account.json()["balance"], "1100.00000000")
+
+
+    def test_account_equity_route_returns_503_when_current_mark_is_stale(self):
+        app.dependency_overrides[get_price_provider] = FixedPriceProvider
+        token = self.token("owner-stale-equity")
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            created = self.client.post(
+                "/api/paper/accounts",
+                headers=headers,
+                json={
+                    "name": "Stale equity route regression",
+                    "quote_currency": "USDT",
+                    "opening_capital": "1000",
+                    "idempotency_key": "stale-equity-route-opening",
+                },
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            account_id = created.json()["account"]["id"]
+
+            opened = self.client.post(
+                f"/api/paper/accounts/{account_id}/trades",
+                headers=headers,
+                json={
+                    "symbol": "SOLUSDT",
+                    "strategy": "stale-equity-route-test",
+                    "side": "LONG",
+                    "stop_price": "95",
+                    "idempotency_key": "stale-equity-route-trade",
+                },
+            )
+            self.assertEqual(opened.status_code, 201, opened.text)
+
+            class StalePriceProvider:
+                def get_price(self, symbol):
+                    return PriceQuote(
+                        symbol=symbol,
+                        price=Decimal("110"),
+                        source="stale-route-test",
+                        retrieved_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+                    )
+
+            # A previously persisted fresh mark exists. The account endpoint
+            # must reject the stale current quote instead of reusing that mark.
+            app.dependency_overrides[get_price_provider] = StalePriceProvider
+            stale_read = self.client.get(
+                f"/api/paper/accounts/{account_id}",
+                headers=headers,
+            )
+            self.assertEqual(stale_read.status_code, 503, stale_read.text)
+            self.assertEqual(
+                stale_read.json()["detail"],
+                "Precio de mercado no disponible o desactualizado",
+            )
+        finally:
+            app.dependency_overrides.pop(get_price_provider, None)
 
 
 if __name__ == "__main__":
