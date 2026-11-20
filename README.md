@@ -1,4 +1,4 @@
-# AI Trader — cryto traiding
+# AI Trader — crypto trading
 
 Plataforma de análisis de mercado cripto con datos públicos reales, señales técnicas explicables, backtesting y simulación interna PAPER.
 
@@ -16,8 +16,8 @@ El dashboard de análisis es de solo lectura. Consultar una señal no abre ni ci
 
 ## Requisitos
 
-- Python 3 compatible con las dependencias fijadas del proyecto.
-- macOS/Linux o Windows con un entorno virtual de Python.
+- Python 3.11 (misma versión principal utilizada por CI).
+- macOS/Linux con un entorno virtual de Python.
 - Conexión a Internet para consultar los datos públicos de mercado.
 
 ## Instalación rápida (backend + dashboard)
