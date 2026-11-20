@@ -80,7 +80,38 @@ curl -fsS "$AI_TRADER_BASE_URL/api/paper/accounts/$ACCOUNT_ID" \
 
 Expected: balance, equity and free cash are decimal strings; the opening balance is 1000 USDT before any simulated trade; no real funds are moved.
 
-## 3. Verify analysis and simulated trade execution
+## 3. Provider-backed two-identity ownership check
+
+A helper script is available at `scripts/verify_paper_oidc_ownership.py`. It
+creates one persistent account with explicitly supplied fictional capital for
+identity A, then checks that identity B cannot discover, read, fund, trade,
+halt, reset or inspect that account. It also verifies that identity A retains
+access and the account balance was not changed by identity B's rejected
+requests.
+
+Run it only against a dedicated PAPER acceptance database. It does not open a
+trade and does not send any exchange order. The created account remains in the
+database; there is no account-delete route.
+
+```sh
+export AI_TRADER_BASE_URL="http://127.0.0.1:8000"
+export AI_TRADER_ACCEPTANCE_DB_CONFIRMED="YES"
+export AI_TRADER_TEST_OPENING_CAPITAL="1000"
+export AI_TRADER_TEST_QUOTE_CURRENCY="USDT"
+
+export AI_TRADER_TEST_USER_A_TOKEN="$(python -c 'import getpass; print(getpass.getpass("OIDC token A: "))')"
+export AI_TRADER_TEST_USER_B_TOKEN="$(python -c 'import getpass; print(getpass.getpass("OIDC token B: "))')"
+
+python scripts/verify_paper_oidc_ownership.py --confirm-create
+```
+
+Use two different Keycloak test users and short-lived Bearer access tokens with
+the configured API audience. The script never prints tokens. It prints the
+created `ACCOUNT_ID`; record it with the test run. A successful result is
+provider-backed evidence for the HTTP ownership boundary only, not full
+trade/ledger release acceptance.
+
+## 4. Verify analysis and simulated trade execution
 
 First request the public, read-only technical analysis:
 
@@ -125,7 +156,7 @@ curl -i -X POST "$AI_TRADER_BASE_URL/api/paper/accounts/$ACCOUNT_ID/trades/$TRAD
   -d '{"exit_reason":"release acceptance test"}'
 ```
 
-## 4. Reconcile ledger and ownership
+## 5. Reconcile ledger and ownership
 
 ```sh
 curl -fsS "$AI_TRADER_BASE_URL/api/paper/accounts/$ACCOUNT_ID" \
@@ -159,7 +190,7 @@ they do not claim distributed locking or multi-database coordination.
 
 The OIDC route integration suite also opens a PAPER position, then supplies a quote older than the 30-second freshness limit and verifies that `GET /api/paper/accounts/{id}` returns HTTP 503. It must not silently reuse the previously persisted fresh mark.
 
-## 5. Dashboard boundary
+## 6. Dashboard boundary
 
 Open `/dashboard/` and verify:
 - [ ] Price and candles load from the same FastAPI origin.
@@ -170,7 +201,7 @@ Open `/dashboard/` and verify:
 
 The dashboard does not yet implement OIDC sign-in or authenticated PAPER account management. Use the authenticated API/Swagger flow for this acceptance procedure.
 
-## 6. Additional OIDC provider checks
+## 7. Additional OIDC provider checks
 
 - [ ] Rotate the Keycloak signing key and verify the API refreshes JWKS and
       handles old/new key overlap according to the documented policy.
@@ -184,7 +215,7 @@ The dashboard does not yet implement OIDC sign-in or authenticated PAPER account
       its OIDC sign-in/session flow; the manually completed PKCE flow does not
       mean dashboard login exists.
 
-## 7. Release decision
+## 8. Release decision
 
 Record the deployment, OIDC provider/client configuration identifier (never its secret), database migration version, test identity, timestamps, API results and CI run. Do not record access tokens.
 
