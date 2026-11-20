@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 try:
     from backend.security.oidc_verifier import (
         InvalidBearerToken, OIDCConfigurationError, OIDCJWTVerifier,
+        OIDCProviderUnavailable,
     )
 except ImportError:
     from security.oidc_verifier import (
@@ -46,6 +47,11 @@ def get_verified_principal(
         ) from None
     try:
         return verifier.verify(credentials.credentials)
+    except OIDCProviderUnavailable:
+        raise HTTPException(
+            status_code=503,
+            detail="El proveedor JWKS de OIDC no está disponible",
+        ) from None
     except InvalidBearerToken:
         raise HTTPException(
             status_code=401,
