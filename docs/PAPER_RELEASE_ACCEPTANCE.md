@@ -14,6 +14,26 @@ This is an operator-run acceptance procedure for the persistent PAPER API. It us
 
 If OIDC is not configured, the PAPER API must fail closed with HTTP 503. A request without a Bearer token must return HTTP 401. Do not bypass these checks to make the test pass.
 
+## Previously completed local Keycloak smoke test (2026-11-17)
+
+This is recorded evidence from the development environment, not a claim that
+the full release checklist has passed:
+
+- Keycloak 26.8.2, realm `ai-trader`, issuer
+  `https://localhost:8443/realms/ai-trader`.
+- Client `ai-trader-test`, API audience `ai-trader-api`, test user
+  `trader-test`.
+- Authorization Code + PKCE S256 token exchange succeeded.
+- The access token contained a subject and audiences `ai-trader-api` and
+  `account`; an authenticated API request returned HTTP 200.
+- `/health` returned HTTP 200.
+
+Do not repeat this as an unstarted configuration task. The smoke test did not
+complete the two-user isolation, key-rotation, provider-outage,
+revocation/session, or full account/trade/ledger acceptance below. Repeat the
+necessary checks against the controlled release deployment and record fresh
+evidence there. Never copy tokens or secrets into this checklist.
+
 ## 1. Verify API and authentication boundary
 
 ```sh
@@ -31,7 +51,7 @@ Expected:
 - PAPER accounts without a token return HTTP 401.
 - With a valid token, the account list returns HTTP 200 and only accounts owned by that OIDC issuer/subject.
 
-Also verify an expired token and a token with the wrong audience are rejected with HTTP 401.
+Also verify an expired token and a token with the wrong audience are rejected with HTTP 401. The automated suite already covers these token-validation cases with hermetic keys; record the provider-backed deployment result separately.
 
 ## 2. Create a PAPER account with explicit fictional capital
 
@@ -125,7 +145,7 @@ curl -fsS "$AI_TRADER_BASE_URL/api/paper/accounts/$ACCOUNT_ID/risk" \
 - [ ] Opening/closing events and realized P&L reconcile with the account balance.
 - [ ] Equity/free cash are consistent with the persisted ledger and fresh marks.
 - [ ] Replaying the same idempotency key does not duplicate a trade or funding event.
-- [ ] A second OIDC test identity cannot list, read, trade, fund, halt or reset the first identity's account (resources should be indistinguishable from not found).
+- [ ] A second Keycloak/OIDC test identity cannot list, read, trade, fund, halt or reset the first identity's account (resources should be indistinguishable from not found).
 - [ ] Missing/stale market data blocks valuation/execution instead of reusing stale prices.
 
 ### Automated ledger concurrency coverage
@@ -150,7 +170,21 @@ Open `/dashboard/` and verify:
 
 The dashboard does not yet implement OIDC sign-in or authenticated PAPER account management. Use the authenticated API/Swagger flow for this acceptance procedure.
 
-## 6. Release decision
+## 6. Additional OIDC provider checks
+
+- [ ] Rotate the Keycloak signing key and verify the API refreshes JWKS and
+      handles old/new key overlap according to the documented policy.
+- [ ] Make the JWKS/provider unavailable and verify fail-closed behavior,
+      recovery after service restoration, and no unsafe cached-key behavior.
+- [ ] Document token/session revocation behavior and residual access window.
+- [ ] Verify the configured HTTPS certificate trust in the target test
+      deployment; `localhost` smoke-test success alone is not production TLS
+      acceptance.
+- [ ] If the dashboard is the intended user interface, implement and test
+      its OIDC sign-in/session flow; the manually completed PKCE flow does not
+      mean dashboard login exists.
+
+## 7. Release decision
 
 Record the deployment, OIDC provider/client configuration identifier (never its secret), database migration version, test identity, timestamps, API results and CI run. Do not record access tokens.
 
