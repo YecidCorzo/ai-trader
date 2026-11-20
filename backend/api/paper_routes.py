@@ -121,8 +121,10 @@ def _raise_paper_error(error):
         raise HTTPException(status_code=404, detail="Recurso PAPER no encontrado") from None
     if isinstance(error, RiskRejectedError):
         raise HTTPException(status_code=409, detail=error.reason) from None
-    if isinstance(error, (StaleMarketPriceError, PaperPriceProviderError)):
+    if isinstance(error, PaperPriceProviderError):
         raise HTTPException(status_code=503, detail="Proveedor de precios no disponible") from None
+    if isinstance(error, StaleMarketPriceError):
+        raise HTTPException(status_code=503, detail="Precio de mercado no disponible o desactualizado") from None
     if isinstance(error, MissingOpeningCapitalError):
         raise HTTPException(status_code=409, detail="La cuenta PAPER requiere capital inicial explícito") from None
     if isinstance(error, (PaperAccountError, ValueError)):
