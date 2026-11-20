@@ -14,6 +14,7 @@ import os
 import sys
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 import requests
 
@@ -27,9 +28,8 @@ def required_env(name: str) -> str:
 
 def expect_status(label: str, response: requests.Response, expected: int) -> None:
     if response.status_code != expected:
-        detail = response.text[:500].replace("\n", " ")
         raise RuntimeError(
-            f"{label}: esperado HTTP {expected}, recibido {response.status_code}: {detail}"
+            f"{label}: esperado HTTP {expected}, recibido {response.status_code}"
         )
     print(f"PASS {label}: HTTP {expected}")
 
@@ -79,6 +79,20 @@ def main() -> int:
     base_url = os.environ.get(
         "AI_TRADER_BASE_URL", "http://127.0.0.1:8000"
     ).strip().rstrip("/")
+    parsed_base = urlsplit(base_url)
+    if (
+        parsed_base.scheme not in {"http", "https"}
+        or not parsed_base.hostname
+        or parsed_base.username is not None
+        or parsed_base.password is not None
+        or parsed_base.query
+        or parsed_base.fragment
+    ):
+        raise ValueError("AI_TRADER_BASE_URL debe ser una URL HTTP(S) válida, sin credenciales, query ni fragmento.")
+    if parsed_base.scheme == "http" and parsed_base.hostname not in {
+        "localhost", "127.0.0.1", "::1"
+    }:
+        raise ValueError("Para hosts no locales, AI_TRADER_BASE_URL debe usar HTTPS.")
     token_a = required_env("AI_TRADER_TEST_USER_A_TOKEN")
     token_b = required_env("AI_TRADER_TEST_USER_B_TOKEN")
     opening_capital = required_env("AI_TRADER_TEST_OPENING_CAPITAL")
