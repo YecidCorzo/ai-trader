@@ -137,6 +137,8 @@ cash twice, and an injected funding-event write failure must leave the balance
 unchanged. These tests verify SQLite transaction serialization and rollback;
 they do not claim distributed locking or multi-database coordination.
 
+The OIDC route integration suite also opens a PAPER position, then supplies a quote older than the 30-second freshness limit and verifies that `GET /api/paper/accounts/{id}` returns HTTP 503. It must not silently reuse the previously persisted fresh mark.
+
 ## 5. Dashboard boundary
 
 Open `/dashboard/` and verify:
