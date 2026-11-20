@@ -83,7 +83,7 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
         _get_jwks_client.cache_clear()
         self.jwks_client = FakeJwksClient(self.public_key)
         self.jwks_patcher = patch(
-            "backend.security.oidc_verifier.PyJWKClient",
+            "backend.security.oidc_verifier.ResilientPyJWKClient",
             return_value=self.jwks_client,
         )
         self.jwks_patcher.start()
