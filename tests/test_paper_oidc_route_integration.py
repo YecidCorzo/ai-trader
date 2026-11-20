@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import jwt
+from jwt.exceptions import PyJWKClientConnectionError
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
@@ -141,6 +142,20 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 401, response.text)
                 self.assertNotEqual(response.status_code, 500)
+
+    def test_jwks_provider_connection_failure_returns_503(self):
+        token = self.token("owner-a")
+        with patch.object(
+            self.jwks_client,
+            "get_signing_key_from_jwt",
+            side_effect=PyJWKClientConnectionError("test JWKS outage"),
+        ):
+            response = self.client.get(
+                "/api/paper/accounts",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertNotIn("Bearer", response.text)
 
     def test_owner_cannot_mutate_or_operate_on_another_users_account(self):
         owner_a_token = self.token("owner-a")
