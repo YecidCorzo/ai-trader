@@ -2,13 +2,13 @@ import unittest
 from unittest.mock import Mock, patch
 import requests
 
-from backend.services.bitunix_market_service import (
+from services.bitunix_market_service import (
     BitunixMarketDataError, BitunixMarketService,
 )
 
 
 class BitunixMarketServiceTests(unittest.TestCase):
-    @patch("backend.services.bitunix_market_service.requests.get")
+    @patch("services.bitunix_market_service.requests.get")
     def test_get_price_uses_last_price_from_public_ticker(self, get):
         response = Mock()
         response.json.return_value = {
@@ -19,7 +19,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
         self.assertEqual(BitunixMarketService("SOLUSDT").get_price(), 150.25)
         self.assertEqual(get.call_args.kwargs["timeout"], 10)
 
-    @patch("backend.services.bitunix_market_service.requests.get")
+    @patch("services.bitunix_market_service.requests.get")
     def test_get_candles_normalizes_to_binance_compatible_rows(self, get):
         response = Mock()
         response.json.return_value = {
@@ -34,7 +34,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
         self.assertEqual(candles, [[1700000000000, 10.0, 12.0, 9.0, 11.0, 123.0]])
         self.assertEqual(get.call_args.kwargs["params"]["type"], "LAST_PRICE")
 
-    @patch("backend.services.bitunix_market_service.requests.get")
+    @patch("services.bitunix_market_service.requests.get")
     def test_nonzero_api_code_is_error(self, get):
         response = Mock()
         response.json.return_value = {"code": 10001, "data": None}
@@ -42,7 +42,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
         with self.assertRaises(BitunixMarketDataError):
             BitunixMarketService().get_price()
 
-    @patch("backend.services.bitunix_market_service.requests.get")
+    @patch("services.bitunix_market_service.requests.get")
     def test_timeout_is_provider_unavailable(self, get):
         get.side_effect = requests.Timeout()
         with self.assertRaises(BitunixMarketDataError) as caught:
