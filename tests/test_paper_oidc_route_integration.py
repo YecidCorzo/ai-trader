@@ -4,6 +4,7 @@ import os
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -346,6 +347,107 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(wrong_audience.status_code, 401)
 
+
+    def test_concurrent_http_funding_retries_create_one_ledger_event(self):
+        token = self.token("owner-concurrent-funding")
+        headers = {"Authorization": f"Bearer {token}"}
+        created = self.client.post(
+            "/api/paper/accounts",
+            headers=headers,
+            json={
+                "name": "Concurrent HTTP funding",
+                "quote_currency": "USDT",
+                "opening_capital": "1000",
+                "idempotency_key": "concurrent-http-opening",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        account_id = created.json()["account"]["id"]
+        url = f"/api/paper/accounts/{account_id}/funding"
+        payload = {
+            "event_type": "DEPOSIT",
+            "amount": "100",
+            "idempotency_key": "concurrent-http-deposit",
+        }
+
+        def submit_funding(_):
+            # Separate clients force independent request/DB connections while
+            # sharing only the persistent test database and verified identity.
+            with TestClient(app) as client:
+                return client.post(url, headers=headers, json=payload)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(submit_funding, range(2)))
+
+        for response in responses:
+            self.assertEqual(response.status_code, 200, response.text)
+        event_ids = [response.json()["event"]["id"] for response in responses]
+        self.assertEqual(event_ids[0], event_ids[1])
+
+        events = self.client.get(
+            f"/api/paper/accounts/{account_id}/events",
+            headers=headers,
+        )
+        self.assertEqual(events.status_code, 200, events.text)
+        deposits = [
+            event for event in events.json()["account_events"]
+            if event["event_type"] == "DEPOSIT"
+        ]
+        self.assertEqual(len(deposits), 1)
+        self.assertEqual(deposits[0]["amount"], "100.00000000")
+
+        account = self.client.get(
+            f"/api/paper/accounts/{account_id}",
+            headers=headers,
+        )
+        self.assertEqual(account.status_code, 200, account.text)
+        self.assertEqual(account.json()["balance"], "1100.00000000")
+
+
+    def test_concurrent_http_close_requests_record_one_realized_result(self):
+        app.dependency_overrides[get_price_provider] = FixedPriceProvider
+        token = self.token("owner-concurrent-close")
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            created = self.client.post(
+                "/api/paper/accounts", headers=headers,
+                json={"name": "Concurrent HTTP close", "quote_currency": "USDT",
+                      "opening_capital": "1000", "idempotency_key": "concurrent-close-opening"},
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            account_id = created.json()["account"]["id"]
+            opened = self.client.post(
+                f"/api/paper/accounts/{account_id}/trades", headers=headers,
+                json={"symbol": "SOLUSDT", "strategy": "concurrent-close-test",
+                      "side": "LONG", "stop_price": "95",
+                      "idempotency_key": "concurrent-close-trade"},
+            )
+            self.assertEqual(opened.status_code, 201, opened.text)
+            trade_id = opened.json()["trade"]["id"]
+            close_url = f"/api/paper/accounts/{account_id}/trades/{trade_id}/close"
+
+            def submit_close(_):
+                with TestClient(app) as client:
+                    return client.post(close_url, headers=headers,
+                                       json={"exit_reason": "concurrent close regression"})
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                responses = list(pool.map(submit_close, range(2)))
+            self.assertEqual(sorted(r.status_code for r in responses), [200, 422])
+
+            events = self.client.get(f"/api/paper/accounts/{account_id}/events", headers=headers)
+            self.assertEqual(events.status_code, 200, events.text)
+            realized = [event for event in events.json()["account_events"]
+                        if event["event_type"] == "TRADE_REALIZED_PNL"]
+            self.assertEqual(len(realized), 1)
+            trades = self.client.get(
+                f"/api/paper/accounts/{account_id}/trades", headers=headers,
+                params={"status": "CLOSED"},
+            )
+            self.assertEqual(trades.status_code, 200, trades.text)
+            self.assertEqual([trade["id"] for trade in trades.json()["trades"]], [trade_id])
+        finally:
+            app.dependency_overrides.pop(get_price_provider, None)
 
 
     def test_client_supplied_identity_cannot_override_verified_oidc_principal(self):
