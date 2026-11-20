@@ -41,7 +41,7 @@ class ResilientPyJWKClient(PyJWKClient):
     def __init__(self, uri: str, **kwargs):
         super().__init__(uri, **kwargs)
         self._last_good_jwks = None
-        self._last_unknown_kid_refresh = 0.0
+        self._last_unknown_kid_refresh = float('-inf')
         self._resilience_lock = threading.Lock()
 
     def fetch_data(self):
