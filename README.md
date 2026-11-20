@@ -44,7 +44,7 @@ En macOS, la guía del frontend también documenta la creación del entorno virt
 
 ## PAPER API: configuración adicional obligatoria
 
-La API persistente `/api/paper/*` está protegida por OIDC y falla de forma cerrada si falta configuración. Para probarla necesitas un proveedor OIDC real de pruebas, issuer/audience/JWKS HTTPS y un token Bearer válido.
+La API persistente `/api/paper/*` está protegida por OIDC y falla de forma cerrada si falta configuración. Ya se completó un smoke test local con Keycloak 26.8.2, realm `ai-trader`, PKCE S256 y acceso autenticado a la API (HTTP 200) el 17-11-2026. Para aceptar el release aún hacen falta pruebas con dos identidades, rotación/fallos de JWKS, política de revocación y recorrido completo PAPER en el entorno controlado.
 
 Sigue la guía completa antes de llamar a las rutas PAPER:
 
@@ -65,7 +65,8 @@ La aceptación del release solo es PASS cuando se completan y revisan todos los 
 - No hay integración de órdenes de exchange DEMO/TESTNET.
 - No hay ejecución LIVE ni se permite añadirla a este release.
 - El dashboard no implementa login OIDC ni administración autenticada de cuentas PAPER.
-- La aceptación con proveedor real, TLS/JWKS, PKCE, política de revocación/sesión y pruebas de seguridad pendientes sigue bloqueando el release.
+- El smoke test Keycloak + PKCE ya está realizado; siguen pendientes la aceptación con dos identidades, rotación/fallos de TLS/JWKS, política de revocación/sesión y pruebas end-to-end de PAPER.
+- El dashboard no implementa todavía login OIDC ni administración autenticada de cuentas PAPER.
 - El monitoreo de stops es por polling y no garantiza ejecución durante gaps o caídas del proveedor, worker o base de datos.
 - Un backtest o una señal no demuestra rentabilidad futura. Consulta los artefactos de aceptación histórica y conserva visibles los resultados negativos.
 
