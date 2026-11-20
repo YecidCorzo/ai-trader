@@ -196,7 +196,7 @@ class OIDCVerifierTests(unittest.TestCase):
         _get_jwks_client.cache_clear()
         jwks_url = "https://identity.example.test/.well-known/jwks.json"
         try:
-            with patch("backend.security.oidc_verifier.PyJWKClient") as client_factory:
+            with patch("backend.security.oidc_verifier.ResilientPyJWKClient") as client_factory:
                 client_factory.return_value = FakeJwksClient(self.public_key)
                 verifier_a = OIDCJWTVerifier(
                     issuer="https://identity.example.test/",
