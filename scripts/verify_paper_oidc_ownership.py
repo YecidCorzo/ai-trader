@@ -218,7 +218,7 @@ def main() -> int:
             {"confirmed": True},
         ),
         (
-            "identity B cannot close a trade in account",
+            "identity B cannot close a nonexistent trade (404; not a real-trade authorization test)",
             "POST",
             f"{account_path}/trades/00000000-0000-0000-0000-000000000000/close",
             {"exit_fee": "0", "exit_reason": "negative ownership acceptance test"},
