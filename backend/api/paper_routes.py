@@ -22,7 +22,7 @@ try:
         PaperAuthorizationService, PaperResourceNotFoundError,
     )
     from backend.services.paper_execution import PaperExecutionService, RiskRejectedError
-    from backend.services.paper_price import BinancePublicPriceProvider
+    from backend.services.paper_price import BinancePublicPriceProvider, PaperPriceProviderError
 except ImportError:
     from infrastructure.database import apply_migrations, connect_database
     from security.dependencies import get_verified_principal
@@ -36,7 +36,7 @@ except ImportError:
         PaperAuthorizationService, PaperResourceNotFoundError,
     )
     from services.paper_execution import PaperExecutionService, RiskRejectedError
-    from services.paper_price import BinancePublicPriceProvider
+    from services.paper_price import BinancePublicPriceProvider, PaperPriceProviderError
 
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,8 @@ def _raise_paper_error(error):
         raise HTTPException(status_code=404, detail="Recurso PAPER no encontrado") from None
     if isinstance(error, RiskRejectedError):
         raise HTTPException(status_code=409, detail=error.reason) from None
+    if isinstance(error, PaperPriceProviderError):
+        raise HTTPException(status_code=503, detail="Proveedor de precios no disponible") from None
     if isinstance(error, StaleMarketPriceError):
         raise HTTPException(status_code=503, detail="Precio de mercado no disponible o desactualizado") from None
     if isinstance(error, MissingOpeningCapitalError):

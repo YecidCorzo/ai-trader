@@ -9,6 +9,11 @@ from uuid import uuid4
 import requests
 
 
+class PaperPriceProviderError(RuntimeError):
+    """Public market-price provider failed or returned an unusable quote."""
+
+
+
 @dataclass(frozen=True)
 class PriceQuote:
     symbol: str
@@ -30,19 +35,22 @@ class BinancePublicPriceProvider:
         if not normalized:
             raise ValueError("symbol es obligatorio")
         retrieved_at = datetime.now(timezone.utc)
-        response = requests.get(
-            f"{self.BASE_URL}/ticker/price",
-            params={"symbol": normalized},
-            timeout=self._timeout_seconds,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = requests.get(
+                f"{self.BASE_URL}/ticker/price",
+                params={"symbol": normalized},
+                timeout=self._timeout_seconds,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException:
+            raise PaperPriceProviderError("Proveedor de precios no disponible") from None
         try:
             price = Decimal(str(payload["price"]))
         except (KeyError, InvalidOperation, TypeError, ValueError):
-            raise ValueError("Binance devolvió un precio inválido") from None
+            raise PaperPriceProviderError("Proveedor de precios no disponible") from None
         if not price.is_finite() or price <= 0:
-            raise ValueError("Binance devolvió un precio no positivo")
+            raise PaperPriceProviderError("Proveedor de precios no disponible") from None
         return PriceQuote(
             symbol=normalized,
             price=price,

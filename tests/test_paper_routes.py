@@ -6,11 +6,13 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+import requests
+
 from fastapi.testclient import TestClient
 
 from backend.main import app
 from backend.security.principal import VerifiedPrincipal
-from backend.services.paper_price import PriceQuote
+from backend.services.paper_price import BinancePublicPriceProvider, PriceQuote
 from backend.api.paper_routes import get_price_provider
 from backend.security.dependencies import get_verified_principal
 
@@ -150,6 +152,85 @@ class PaperRoutesTests(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 422)
+
+
+    def test_price_provider_failures_return_503_without_mutating_paper_ledger(self):
+        account_id = self.create_account("price-provider-failure-account")
+        opened = self.client.post(
+            f"/api/paper/accounts/{account_id}/trades",
+            json={
+                "symbol": "SOLUSDT",
+                "strategy": "provider-failure-regression",
+                "side": "LONG",
+                "stop_price": "95",
+                "idempotency_key": "provider-failure-open",
+            },
+        )
+        self.assertEqual(opened.status_code, 201, opened.text)
+        trade_id = opened.json()["trade"]["id"]
+
+        class FakeResponse:
+            def __init__(self, payload=None, error=None):
+                self.payload = payload or {"price": "100"}
+                self.error = error
+
+            def raise_for_status(self):
+                if self.error:
+                    raise self.error
+
+            def json(self):
+                return self.payload
+
+        failures = {
+            "timeout": requests.Timeout("private timeout detail"),
+            "http-5xx": requests.HTTPError("private upstream response detail"),
+            "connection": requests.ConnectionError("private connection detail"),
+            "invalid-price": FakeResponse({"price": "-1"}),
+        }
+
+        app.dependency_overrides[get_price_provider] = lambda: BinancePublicPriceProvider()
+        try:
+            for name, failure in failures.items():
+                with self.subTest(provider_failure=name):
+                    if name == "invalid-price":
+                        request_patch = patch(
+                            "backend.services.paper_price.requests.get",
+                            return_value=failure,
+                        )
+                    else:
+                        request_patch = patch(
+                            "backend.services.paper_price.requests.get",
+                            side_effect=failure,
+                        )
+                    with request_patch:
+                        account_response = self.client.get(f"/api/paper/accounts/{account_id}")
+                        self.assertEqual(account_response.status_code, 503, account_response.text)
+                        self.assertEqual(
+                            account_response.json()["detail"],
+                            "Proveedor de precios no disponible",
+                        )
+                        close_response = self.client.post(
+                            f"/api/paper/accounts/{account_id}/trades/{trade_id}/close",
+                            json={"exit_reason": "provider failure regression"},
+                        )
+                        self.assertEqual(close_response.status_code, 503, close_response.text)
+                        self.assertEqual(
+                            close_response.json()["detail"],
+                            "Proveedor de precios no disponible",
+                        )
+
+                    trades = self.client.get(
+                        f"/api/paper/accounts/{account_id}/trades?status=OPEN"
+                    )
+                    self.assertEqual(trades.status_code, 200, trades.text)
+                    self.assertEqual([item["id"] for item in trades.json()["trades"]], [trade_id])
+                    events = self.client.get(f"/api/paper/accounts/{account_id}/events")
+                    self.assertEqual(events.status_code, 200, events.text)
+                    event_types = [item["event_type"] for item in events.json()["trade_events"]]
+                    self.assertNotIn("TRADE_REALIZED_PNL", event_types)
+        finally:
+            app.dependency_overrides[get_price_provider] = lambda: self.provider
+
 
 
 if __name__ == "__main__":
