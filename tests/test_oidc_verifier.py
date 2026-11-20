@@ -273,13 +273,16 @@ class OIDCVerifierTests(unittest.TestCase):
             def __init__(self, key_id):
                 self.key_id = key_id
         cached = [Key("cached-key")]
-        with patch.object(client, "get_signing_keys", side_effect=[cached, cached]) as get_keys:
+        with patch.object(
+            client, "get_signing_keys", side_effect=[cached, cached, cached]
+        ) as get_keys:
             for _ in range(2):
                 with self.assertRaises(Exception):
                     client.get_signing_key("attacker-kid")
-            self.assertEqual(get_keys.call_count, 2)
+            self.assertEqual(get_keys.call_count, 3)
             self.assertEqual(get_keys.call_args_list[0].kwargs, {})
-            self.assertEqual(get_keys.call_args_list[1].kwargs, {})
+            self.assertEqual(get_keys.call_args_list[1].kwargs, {"refresh": True})
+            self.assertEqual(get_keys.call_args_list[2].kwargs, {})
 
     def test_missing_oidc_configuration_fails_closed_with_503(self):
         clear_oidc_verifier_cache()
