@@ -14,18 +14,46 @@ audience and JWKS URL; validates RS256 signatures and required `iss`, `sub`,
 `aud`, `iat` and `exp` claims; and caches the JWKS client/key set. This is a
 provider-neutral JWT/JWKS verifier, not a complete provider integration.
 
-**Release status: BLOCKED pending provider-backed acceptance and security
-closure.** No real OIDC provider has yet been configured and exercised end to
-end. The active verifier enforces a configurable access-token lifetime through
+**Release status: BLOCKED pending additional provider-backed acceptance and
+security closure.** A local Keycloak 26.8.2 integration smoke test was completed
+on 2026-11-17 (recorded below): Authorization Code + PKCE S256 issued a token
+that the API accepted with HTTP 200. This is completed evidence and must not be
+repeated as an unstarted setup task. It is not yet full release acceptance:
+two-user isolation against the selected provider, provider/JWKS key rotation
+and outage behavior, and a documented revocation/session policy remain open.
+
+The active verifier enforces a configurable access-token lifetime through
 `AI_TRADER_OIDC_MAX_TOKEN_LIFETIME_SECONDS` (default 3600 seconds; accepted
 range 60–86400 seconds; hard ceiling 86400 seconds), requires `exp > iat`, and
-validates `nbf` when present.
+validates `nbf` when present. Token/session revocation, provider introspection,
+and required `auth_time` or a maximum authentication age are not implemented.
+The verifier uses a configured JWKS URL. The Authorization Code + PKCE flow
+was exercised separately against Keycloak, but OIDC discovery, browser
+sign-in/session handling and authenticated PAPER account management are not
+implemented in the AI Trader dashboard.
 
-Token/session revocation, provider introspection, and required `auth_time` or a
-maximum authentication age are not implemented. The verifier uses a configured
-JWKS URL; OIDC discovery and browser Authorization Code + PKCE are not
-implemented by the AI Trader dashboard/API. A separate OIDC client/provider
-flow must obtain the access token used for API acceptance.
+## Recorded Keycloak smoke test (2026-11-17)
+
+The following setup and smoke-test steps were completed in the development
+environment and are recorded as completed work:
+
+- Keycloak 26.8.2, realm `ai-trader`.
+- Issuer: `https://localhost:8443/realms/ai-trader`.
+- OIDC client used for the authorization flow: `ai-trader-test`.
+- API audience: `ai-trader-api`.
+- Authorization Code flow with PKCE method S256 completed successfully.
+- Test identity: `trader-test`.
+- The returned access token contained a subject and audience values
+  `ai-trader-api` and `account`.
+- Authenticated API request returned HTTP 200; `/health` returned HTTP 200.
+
+No access token, client secret or private key is stored in this document.
+This evidence proves that the configured Keycloak token could be exchanged
+and accepted by the API in that development setup. It does **not** prove
+second-user account isolation with Keycloak, key rotation, provider/JWKS
+outage recovery, token revocation, production certificate trust, or the
+complete PAPER account/trade/ledger lifecycle. Those remain separate
+acceptance checks. The dashboard itself still has no OIDC login UI.
 
 ## Security invariants
 
@@ -143,30 +171,40 @@ added by merged PRs #122–#125:
   account valuation and trade close, leaving the trade open and writing no
   realized-P&L event.
 
-These tests are hermetic. They do not prove real provider discovery,
-external TLS/JWKS delivery, browser PKCE, provider session behavior,
-revocation, or provider outage/key-rotation behavior.
+These tests are hermetic. Separately, the recorded Keycloak smoke test above
+proves one successful PKCE token exchange and authenticated API request. The
+combined evidence still does not prove provider discovery, production-grade
+TLS/JWKS delivery, multi-user provider-backed isolation, provider session
+behavior, revocation, or provider outage/key-rotation behavior.
 
 ## Remaining provider-backed acceptance gate
 
-A real provider test must use a dedicated test tenant/client, two distinct
-test identities, HTTPS issuer/JWKS endpoints, and a disposable or dedicated
-persistent test database. Use short-lived access tokens and keep them out of
-source control, issues, PRs and logs. The test must cover authenticated
-account creation with fictional capital, equity read, simulated trade
-open/close only when market data and risk gates permit, ledger reconciliation,
-and cross-owner isolation.
+The next provider-backed acceptance pass must reuse the already configured
+Keycloak test realm/client where available (or a dedicated equivalent), use
+two distinct test identities, HTTPS issuer/JWKS endpoints, and a disposable or
+dedicated persistent test database. Do not redo the completed single-user
+PKCE/API smoke test as if it were missing. Use short-lived access tokens and
+keep them out of source control, issues, PRs and logs. The remaining end-to-end
+pass must cover authenticated account creation with fictional capital, equity
+read, simulated trade open/close only when market data and risk gates permit,
+ledger reconciliation, and cross-owner isolation.
 
 The following remain release gates and must have recorded evidence:
 
-- a selected real OIDC provider and dedicated test tenant/client;
-- provider-backed token issuance and HTTPS/TLS/JWKS delivery;
-- key rotation and provider/JWKS outage behavior;
+- repeatable provider-backed acceptance in the controlled release/test
+  deployment (the local Keycloak smoke test is already recorded above);
+- verification of two distinct Keycloak identities and cross-owner isolation
+  against the persistent PAPER API;
+- provider/JWKS key rotation and outage behavior, including the selected
+  provider's HTTPS/TLS trust configuration;
 - a documented revocation/session policy and its residual exposure window;
-- a browser Authorization Code + PKCE flow (the current dashboard does not
-  implement sign-in or session management);
+- dashboard OIDC sign-in and session handling if the dashboard is to be the
+  user-facing PAPER interface (the manual PKCE flow already succeeded, but the
+  dashboard does not implement it);
 - verification that legacy unowned accounts remain inaccessible using the
-  provider-backed acceptance setup.
+  provider-backed acceptance setup;
+- complete account creation, simulated trade, close and ledger reconciliation
+  using the provider-backed test identity.
 
 Do not close issue #47 or declare the PAPER release accepted until the
 provider-backed test and the outstanding security checks above have evidence.
