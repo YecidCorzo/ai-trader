@@ -70,6 +70,42 @@ class BitunixMarketServiceTests(unittest.TestCase):
                         service.get_candles("5m", 1)
 
     @patch("services.bitunix_market_service.requests.get")
+    def test_invalid_ohlcv_candles_are_rejected(self, get):
+        response = Mock()
+        get.return_value = response
+        service = BitunixMarketService()
+        valid = {
+            "time": 1700000000000, "open": "10", "high": "12",
+            "low": "9", "close": "11", "baseVol": "123",
+        }
+        invalid_values = [
+            {"high": "9.5"},       # high below open/close
+            {"low": "11.5"},       # low above open/close
+            {"baseVol": "-1"},     # negative volume
+            {"time": "0"},         # invalid timestamp
+            {"open": "0"},         # non-positive price
+        ]
+        for changes in invalid_values:
+            with self.subTest(changes=changes):
+                response.json.return_value = {
+                    "code": 0, "data": [{**valid, **changes}],
+                }
+                with self.assertRaises(BitunixMarketDataError):
+                    service.get_candles("5m", 1)
+
+    @patch("services.bitunix_market_service.requests.get")
+    def test_duplicate_timestamps_in_provider_batch_are_rejected(self, get):
+        response = Mock()
+        candle = {
+            "time": 1700000000000, "open": "10", "high": "12",
+            "low": "9", "close": "11", "baseVol": "123",
+        }
+        response.json.return_value = {"code": 0, "data": [candle, candle.copy()]}
+        get.return_value = response
+        with self.assertRaises(BitunixMarketDataError):
+            BitunixMarketService().get_candles("5m", 2)
+
+    @patch("services.bitunix_market_service.requests.get")
     def test_nonzero_api_code_is_error(self, get):
         response = Mock()
         response.json.return_value = {"code": 10001, "data": None}
