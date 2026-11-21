@@ -163,6 +163,7 @@
       <h2 id="multi-timeframe-heading">Confirmación multi-timeframe <span class="muted">· 1h / 4h</span></h2>
       <p class="muted">Analiza velas cerradas de ambos intervalos. Solo muestra LONG o SHORT como consenso cuando los dos timeframes coinciden; cualquier discrepancia o dato incompleto produce NEUTRAL.</p>
       <button class="backtest-run" id="refresh-multi-timeframe" type="button">Actualizar análisis 1h / 4h</button>
+      <div class="analysis-warning" role="note">Estrategia NO_GO — niveles ilustrativos, sin ventaja demostrada; la regla 1h/4h no está validada.</div>
       <div id="multi-timeframe-consensus" class="consensus status" aria-live="polite">Consultando confirmación multi-timeframe…</div>
       <div id="multi-timeframe-results" class="timeframe-grid">
         <div class="timeframe-card muted">Cargando análisis de 1h y 4h…</div>
@@ -223,18 +224,18 @@
   </main>
 
   <script src="https://unpkg.com/lightweight-charts@5.3.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="/dashboard/multi_timeframe.js"></script>
   <script>
     function formatAnalysisValue(value, digits = 4) {
   if (value == null || value === "" || !Number.isFinite(Number(value))) return "N/D";
   return Number(value).toFixed(digits);
 }
 
-let multiTimeframeRequestInFlight = false;
+const multiTimeframeRequestGate = window.AITraderMultiTimeframe.createRequestGate();
 
 async function loadMultiTimeframe() {
   // The 60-second refresh must not overlap a slow provider request.
-  if (multiTimeframeRequestInFlight) return;
-  multiTimeframeRequestInFlight = true;
+  if (!multiTimeframeRequestGate.enter()) return;
 
   const button = document.getElementById("refresh-multi-timeframe");
   const consensusBox = document.getElementById("multi-timeframe-consensus");
@@ -253,20 +254,7 @@ async function loadMultiTimeframe() {
       throw new Error(data.detail || "Análisis multi-timeframe no disponible");
     }
 
-    const timeframe1h = data.timeframes["1h"];
-    const timeframe4h = data.timeframes["4h"];
-    const signal1h = String(timeframe1h?.signal || "NEUTRAL").toUpperCase();
-    const signal4h = String(timeframe4h?.signal || "NEUTRAL").toUpperCase();
-    const apiConsensus = String(data.consensus || "NEUTRAL").toUpperCase();
-    // Fail closed if the payload is incomplete or its consensus disagrees
-    // with the individual timeframe results.
-    const directionalAgreement =
-      timeframe1h?.available === true &&
-      timeframe4h?.available === true &&
-      ["LONG", "SHORT"].includes(signal1h) &&
-      signal1h === signal4h &&
-      apiConsensus === signal1h;
-    const consensus = directionalAgreement ? signal1h : "NEUTRAL";
+    const consensus = window.AITraderMultiTimeframe.resolveConsensus(data);
     consensusBox.replaceChildren();
     const heading = document.createElement("strong");
     heading.textContent = "Consenso: " + consensus;
@@ -306,6 +294,7 @@ async function loadMultiTimeframe() {
           "VWAP UTC: " + formatAnalysisValue(indicators.vwap_utc_day),
           "ATR 14: " + formatAnalysisValue(indicators.atr_14),
           "Puntuación de reglas: " + formatAnalysisValue(item.score, 0) + "/100 (no es probabilidad)",
+          "Estrategia NO_GO — niveles ilustrativos, sin ventaja demostrada; la regla 1h/4h no está validada",
           "Entrada / SL: " + formatAnalysisValue(item.entry) + " / " + formatAnalysisValue(item.stop_loss),
           "TP1 / TP2: " + formatAnalysisValue(item.take_profit_1) + " / " + formatAnalysisValue(item.take_profit_2),
           "Invalidación: " + formatAnalysisValue(item.invalidation?.price),
@@ -330,7 +319,7 @@ async function loadMultiTimeframe() {
     consensusBox.textContent = "Análisis multi-timeframe no disponible: " + error.message;
     resultsBox.textContent = "No se muestran señales parciales como consenso.";
   } finally {
-    multiTimeframeRequestInFlight = false;
+    multiTimeframeRequestGate.leave();
     if (button) {
       button.disabled = false;
       button.textContent = "Actualizar análisis 1h / 4h";
@@ -652,6 +641,7 @@ async function loadSignal() {
     const lines = [
       "Señal: " + String(data.signal).toUpperCase(),
       "Puntuación de reglas: " + (data.score ?? "N/D") + "/100 (no es probabilidad)",
+      "Estrategia NO_GO — niveles ilustrativos, sin ventaja demostrada; la regla 1h/4h no está validada",
       "Entrada de referencia: " + formatPrice(data.entry) + " USDT",
       "Stop Loss: " + formatPrice(data.stop_loss) + " USDT",
       "Take Profit 1: " + formatPrice(data.take_profit_1) + " USDT",
