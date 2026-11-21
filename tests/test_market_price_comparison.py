@@ -5,13 +5,16 @@ from services.market_price_comparison import MarketPriceComparisonService
 
 
 class MarketPriceComparisonTests(unittest.TestCase):
-    def service(self, spot=100.0, futures=100.0, threshold=50.0):
+    def service(self, spot=100.0, futures=100.0, threshold=50.0, monotonic=None):
         binance = Mock()
         bitunix = Mock()
         binance.get_price.return_value = spot
         bitunix.get_price.return_value = futures
         return MarketPriceComparisonService(
-            binance, bitunix, max_abs_basis_bps=threshold, monotonic=lambda: 10.0
+            binance,
+            bitunix,
+            max_abs_basis_bps=threshold,
+            monotonic=monotonic or (lambda: 10.0),
         ), binance, bitunix
 
     def test_equal_prices_have_zero_basis_and_no_alert(self):
@@ -23,6 +26,13 @@ class MarketPriceComparisonTests(unittest.TestCase):
         self.assertTrue(result["shadow_mode"])
         self.assertFalse(result["strategy_source_changed"])
         self.assertFalse(result["orders_enabled"])
+
+    def test_exact_threshold_does_not_trigger_alert(self):
+        service, _, _ = self.service(spot=100, futures=100.5, threshold=50)
+        result = service.compare()
+        self.assertAlmostEqual(result["basis_bps"], 50.0)
+        self.assertEqual(result["status"], "ok")
+        self.assertFalse(result["alert"])
 
     def test_positive_basis_above_threshold_triggers_alert(self):
         service, _, _ = self.service(spot=100, futures=100.6, threshold=50)
@@ -58,6 +68,22 @@ class MarketPriceComparisonTests(unittest.TestCase):
         service.compare()
         binance.get_price.assert_called_once()
         bitunix.get_price.assert_called_once()
+
+    def test_cache_expires_at_five_second_boundary(self):
+        clock = [10.0]
+        service, binance, bitunix = self.service(
+            spot=100, futures=100.1, monotonic=lambda: clock[0]
+        )
+        service.compare()
+        clock[0] = 14.999
+        service.compare()
+        binance.get_price.assert_called_once()
+        bitunix.get_price.assert_called_once()
+
+        clock[0] = 15.0
+        service.compare()
+        self.assertEqual(binance.get_price.call_count, 2)
+        self.assertEqual(bitunix.get_price.call_count, 2)
 
     def test_threshold_must_be_positive_and_finite(self):
         binance, bitunix = Mock(), Mock()
