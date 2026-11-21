@@ -8,6 +8,7 @@ Plataforma de análisis de mercado cripto con datos públicos reales, señales t
 
 - **Mercado:** Binance se utiliza únicamente para consultar datos públicos de mercado en modo lectura.
 - **Análisis:** señales e indicadores técnicos; una señal NEUTRAL también es un resultado válido.
+- **Multi-timeframe:** análisis de velas cerradas 1h/4h con consenso LONG/SHORT estricto; discrepancias o datos incompletos producen NEUTRAL.
 - **PAPER:** ledger interno con capital ficticio. No representa saldo de un exchange.
 - **Ejecución externa:** no se incluye un adaptador de órdenes DEMO/TESTNET verificado.
 - **LIVE:** prohibido en este release. No se admiten credenciales de exchange, órdenes live, fondos reales ni endpoints live.
