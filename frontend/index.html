@@ -229,7 +229,13 @@
   return Number(value).toFixed(digits);
 }
 
+let multiTimeframeRequestInFlight = false;
+
 async function loadMultiTimeframe() {
+  // The 60-second refresh must not overlap a slow provider request.
+  if (multiTimeframeRequestInFlight) return;
+  multiTimeframeRequestInFlight = true;
+
   const button = document.getElementById("refresh-multi-timeframe");
   const consensusBox = document.getElementById("multi-timeframe-consensus");
   const resultsBox = document.getElementById("multi-timeframe-results");
@@ -247,7 +253,20 @@ async function loadMultiTimeframe() {
       throw new Error(data.detail || "Análisis multi-timeframe no disponible");
     }
 
-    const consensus = String(data.consensus || "NEUTRAL").toUpperCase();
+    const timeframe1h = data.timeframes["1h"];
+    const timeframe4h = data.timeframes["4h"];
+    const signal1h = String(timeframe1h?.signal || "NEUTRAL").toUpperCase();
+    const signal4h = String(timeframe4h?.signal || "NEUTRAL").toUpperCase();
+    const apiConsensus = String(data.consensus || "NEUTRAL").toUpperCase();
+    // Fail closed if the payload is incomplete or its consensus disagrees
+    // with the individual timeframe results.
+    const directionalAgreement =
+      timeframe1h?.available === true &&
+      timeframe4h?.available === true &&
+      ["LONG", "SHORT"].includes(signal1h) &&
+      signal1h === signal4h &&
+      apiConsensus === signal1h;
+    const consensus = directionalAgreement ? signal1h : "NEUTRAL";
     consensusBox.replaceChildren();
     const heading = document.createElement("strong");
     heading.textContent = "Consenso: " + consensus;
@@ -270,7 +289,9 @@ async function loadMultiTimeframe() {
       card.appendChild(title);
       const signal = document.createElement("div");
       signal.className = "timeframe-signal";
-      signal.textContent = String(item.signal || "NEUTRAL").toUpperCase();
+      signal.textContent = item.available
+        ? String(item.signal || "NEUTRAL").toUpperCase()
+        : "NEUTRAL";
       card.appendChild(signal);
 
       const indicators = item.indicators || {};
@@ -309,6 +330,7 @@ async function loadMultiTimeframe() {
     consensusBox.textContent = "Análisis multi-timeframe no disponible: " + error.message;
     resultsBox.textContent = "No se muestran señales parciales como consenso.";
   } finally {
+    multiTimeframeRequestInFlight = false;
     if (button) {
       button.disabled = false;
       button.textContent = "Actualizar análisis 1h / 4h";
