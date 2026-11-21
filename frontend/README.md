@@ -7,6 +7,8 @@ Dashboard web servido por FastAPI en `/dashboard`.
 - Precio público SOL/USDT consultado desde la API del backend.
 - Gráfico de velas SOL/USDT.
 - Consulta de análisis técnico avanzado mediante `GET /api/signal/v2`.
+- Confirmación multi-timeframe 1h/4h mediante `GET /api/signal/multi-timeframe`, con consenso estricto: LONG o SHORT solo cuando ambos intervalos coinciden; discrepancias o datos incompletos producen NEUTRAL.
+- Visualización por intervalo de EMA 9/21/50, RSI, MACD, VWAP, ATR, puntuación de reglas, niveles de entrada/salida e invalidación cuando están disponibles.
 - Presentación de señal LONG/SHORT/NEUTRAL, puntuación, entrada de referencia, stop loss, take profits, invalidación y motivos.
 - Backtest histórico PAPER y validación walk-forward PAPER.
 
