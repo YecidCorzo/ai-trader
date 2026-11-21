@@ -291,7 +291,8 @@ class BitunixMarketService:
         metadata = {
             "candles": candles,
             "complete": complete,
-            "history_exhausted": history_exhausted or short_page,
+            "history_exhausted": history_exhausted,
+            "provider_page_short": short_page,
             "requested": limit,
             "returned": len(candles),
             "interval": interval,
@@ -299,4 +300,9 @@ class BitunixMarketService:
         }
         if include_metadata:
             return metadata
+        if not complete:
+            raise BitunixMarketDataError(
+                "Bitunix returned incomplete candle history",
+                status_code=503,
+            )
         return candles
