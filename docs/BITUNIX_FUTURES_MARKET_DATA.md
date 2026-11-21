@@ -16,6 +16,9 @@ Safety boundaries:
   position, order, or leverage endpoint is implemented.
 - Non-finite ticker and candle values (NaN and positive/negative infinity)
   are rejected as invalid upstream data before they reach analysis.
+- Candle timestamps must be positive and unique within each response batch;
+  OHLC prices must be positive and internally consistent, and base volume
+  must be non-negative.
 - No Bitunix order execution or TESTNET/DEMO integration.
 - No existing Binance behavior or strategy parameters are changed.
 - Bitunix Futures market data is not interchangeable with Spot data.
