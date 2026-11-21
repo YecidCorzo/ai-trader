@@ -535,3 +535,83 @@ def run_walk_forward(
         raise
     except Exception:
         raise _internal_server_error("walk_forward_backtest") from None
+
+
+# Bitunix Futures is an additional read-only market-data source.
+# No private API, account, position, or order endpoints are used here.
+from services.bitunix_market_service import (
+    BitunixMarketDataError,
+    BitunixMarketService,
+)
+
+bitunix_market_service = BitunixMarketService("SOLUSDT")
+
+
+def _bitunix_market_data_http_error(error):
+    logger.warning("Bitunix market-data upstream failure: %s", type(error).__name__)
+    return HTTPException(
+        status_code=error.status_code,
+        detail="Proveedor Bitunix de datos de mercado no disponible",
+    )
+
+
+@app.get("/api/bitunix/price")
+def get_bitunix_price():
+    try:
+        price = bitunix_market_service.get_price()
+        try:
+            mark_price = bitunix_market_service.get_mark_price()
+        except BitunixMarketDataError:
+            # Last traded price remains informational; mark price is not
+            # silently substituted and is not used by PAPER risk or stops.
+            mark_price = None
+            logger.warning("Bitunix mark price unavailable; risk integration remains disabled")
+    except BitunixMarketDataError as error:
+        raise _bitunix_market_data_http_error(error) from None
+    return {
+        "symbol": "SOL/USDT",
+        "price": price,
+        "price_type": "last_traded_price_not_mark_price",
+        "mark_price": mark_price,
+        "mark_price_available": mark_price is not None,
+        "source": "Bitunix Futures",
+        "data_type": "real_market_data",
+        "mode": "paper",
+    }
+
+
+@app.get("/api/bitunix/candles")
+def get_bitunix_candles(
+    interval: str = Query("5m"),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    try:
+        result = bitunix_market_service.get_candles(
+            interval=interval, limit=limit, closed_only=True, include_metadata=True
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except BitunixMarketDataError as error:
+        raise _bitunix_market_data_http_error(error) from None
+    return {
+        "symbol": "SOL/USDT",
+        "interval": interval,
+        "source": "Bitunix Futures",
+        "candles": [
+            {
+                "time": int(row[0] / 1000),
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+                "volume": float(row[5]),
+            }
+            for row in result["candles"]
+        ],
+        "candles_requested": result["requested"],
+        "candles_returned": result["returned"],
+        "complete": result["complete"],
+        "history_exhausted": result["history_exhausted"],
+        "warning": None if result["complete"] else "Histórico incompleto: no se alcanzó el número de velas cerradas solicitado.",
+        "mode": "paper",
+    }
