@@ -125,11 +125,24 @@ class BitunixMarketService:
                         int(item["time"]), float(item["open"]), float(item["high"]),
                         float(item["low"]), float(item["close"]), float(item["baseVol"]),
                     ]
-                    if not all(math.isfinite(value) for value in candle[1:]):
-                        raise ValueError("non-finite candle value")
+                    timestamp, open_price, high, low, close, volume = candle
+                    if (
+                        timestamp <= 0
+                        or not all(math.isfinite(value) for value in candle[1:])
+                        or min(open_price, high, low, close) <= 0
+                        or volume < 0
+                        or high < max(open_price, close, low)
+                        or low > min(open_price, close, high)
+                    ):
+                        raise ValueError("invalid OHLCV candle")
                     normalized.append(candle)
 
                 normalized.sort(key=lambda candle: candle[0])
+                if any(
+                    normalized[index][0] == normalized[index + 1][0]
+                    for index in range(len(normalized) - 1)
+                ):
+                    raise ValueError("duplicate candle timestamp")
                 existing = {int(candle[0]) for candle in candles}
                 normalized = [
                     candle for candle in normalized
