@@ -88,6 +88,37 @@ class BitunixMarketServiceTests(unittest.TestCase):
             service(clock_ms=lambda: BASE_TIME + 2_000_000).get_candles("5m", 2)
 
     @patch("services.bitunix_market_service.requests.get")
+    def test_pagination_collects_contiguous_pages_without_silent_truncation(self, get):
+        response_newer = Mock()
+        response_newer.status_code = 200
+        response_older = Mock()
+        response_older.status_code = 200
+        older = [candle(BASE_TIME + index * 300_000) for index in range(2)]
+        newer = [candle(BASE_TIME + index * 300_000) for index in range(2, 202)]
+        response_newer.json.return_value = {"code": 0, "data": newer}
+        response_older.json.return_value = {"code": 0, "data": older}
+        get.side_effect = [response_newer, response_older]
+        result = service(clock_ms=lambda: BASE_TIME + 100_000_000).get_candles(
+            "5m", 201, include_metadata=True
+        )
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["returned"], 201)
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["endTime"], BASE_TIME + 600_000)
+
+    @patch("services.bitunix_market_service.requests.get")
+    def test_one_hour_request_rejects_five_minute_spacing(self, get):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "code": 0,
+            "data": [candle(BASE_TIME), candle(BASE_TIME + 300_000), candle(BASE_TIME + 600_000)],
+        }
+        get.return_value = response
+        with self.assertRaises(BitunixMarketDataError):
+            service(clock_ms=lambda: BASE_TIME + 100_000_000).get_candles("1h", 2)
+
+    @patch("services.bitunix_market_service.requests.get")
     def test_short_provider_page_is_explicitly_marked_incomplete(self, get):
         response = Mock()
         response.status_code = 200
@@ -97,8 +128,12 @@ class BitunixMarketServiceTests(unittest.TestCase):
             "5m", 2, include_metadata=True
         )
         self.assertFalse(result["complete"])
+        self.assertFalse(result["history_exhausted"])
+        self.assertTrue(result["provider_page_short"])
         self.assertEqual(result["returned"], 1)
         self.assertEqual(result["requested"], 2)
+        with self.assertRaises(BitunixMarketDataError):
+            service(clock_ms=lambda: BASE_TIME + 900_000).get_candles("5m", 2)
 
     def test_monthly_interval_is_excluded_and_limit_is_bounded(self):
         market = service()
@@ -155,17 +190,22 @@ class BitunixMarketServiceTests(unittest.TestCase):
 
     @patch("services.bitunix_market_service.requests.get")
     def test_418_and_429_are_retried_with_backoff_then_mapped_to_503(self, get):
-        limited = Mock()
-        limited.status_code = 418
-        limited.headers = {"Retry-After": "0.25"}
         ok = Mock()
         ok.status_code = 200
         ok.json.return_value = {"code": 0, "data": [{"symbol": "SOLUSDT", "lastPrice": "10"}]}
-        get.side_effect = [limited, ok]
-        market = service()
-        self.assertEqual(market.get_price(), 10.0)
-        self.assertEqual(get.call_count, 2)
+        for status in (418, 429):
+            limited = Mock()
+            limited.status_code = status
+            limited.headers = {"Retry-After": "0.25"}
+            get.side_effect = [limited, ok]
+            market = service()
+            self.assertEqual(market.get_price(), 10.0)
+            self.assertEqual(get.call_count, 2)
+            get.reset_mock()
 
+        limited = Mock()
+        limited.status_code = 418
+        limited.headers = {}
         get.side_effect = [limited, limited, limited]
         market = service()
         with self.assertRaises(BitunixMarketDataError) as caught:
