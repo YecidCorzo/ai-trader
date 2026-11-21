@@ -285,6 +285,14 @@ class BitunixMarketService:
                 candle for candle in candles
                 if int(candle[0]) + interval_ms <= now_ms
             ]
+            # A contiguous series is not complete if its newest closed candle
+            # is behind the latest interval that should already have closed.
+            expected_latest_open_ms = (now_ms // interval_ms) * interval_ms - interval_ms
+            if not candles or int(candles[-1][0]) != expected_latest_open_ms:
+                raise BitunixMarketDataError(
+                    "Bitunix devolvió datos desactualizados",
+                    status_code=503,
+                )
         candles = candles[-limit:]
 
         complete = len(candles) >= limit
