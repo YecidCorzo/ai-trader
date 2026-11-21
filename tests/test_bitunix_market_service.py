@@ -19,9 +19,11 @@ def candle(timestamp=BASE_TIME, **changes):
     return row
 
 
-def service(**kwargs):
+def service(symbol="SOLUSDT", **kwargs):
     # Avoid real sleeps in tests while retaining the rate-limiter path.
-    return BitunixMarketService(monotonic=lambda: 10.0, sleep=lambda _: None, **kwargs)
+    return BitunixMarketService(
+        symbol, monotonic=lambda: 10.0, sleep=lambda _: None, **kwargs
+    )
 
 
 class BitunixMarketServiceTests(unittest.TestCase):
