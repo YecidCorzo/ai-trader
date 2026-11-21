@@ -196,6 +196,11 @@ Open `/dashboard/` and verify:
 - [ ] The analysis panel displays the live response from `/api/signal/v2`.
 - [ ] A failed analysis request is shown as unavailable, not as a fabricated signal.
 - [ ] The analysis button does not create or close a PAPER trade.
+- [ ] The multi-timeframe panel loads both 1h and 4h analyses from closed candles.
+- [ ] Each available timeframe shows its signal, rule score (clearly not a probability), EMA 9/21/50, RSI, MACD histogram, VWAP, ATR and available trade-plan levels.
+- [ ] LONG or SHORT consensus appears only when both 1h and 4h independently return the same direction; mixed, missing or invalid timeframe data must remain NEUTRAL.
+- [ ] Manual refresh and periodic refresh update the panel without creating or changing a PAPER position.
+- [ ] Provider/API failures are displayed as unavailable; no stale or fabricated signal is shown as current.
 - [ ] The general dashboard balance remains clearly unconfigured; it is not an authenticated account view.
 
 The dashboard does not yet implement OIDC sign-in or authenticated PAPER account management. Use the authenticated API/Swagger flow for this acceptance procedure.
