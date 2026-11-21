@@ -7,7 +7,7 @@ from services.bitunix_market_service import (
 )
 
 
-BASE_TIME = 1_700_000_000_000
+BASE_TIME = 1_699_999_800_000  # aligned to 5-minute UTC boundaries
 
 
 def candle(timestamp=BASE_TIME, **changes):
@@ -49,7 +49,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
         response.status_code = 200
         response.json.return_value = {"code": 0, "data": [candle()]}
         get.return_value = response
-        result = service(clock_ms=lambda: BASE_TIME + 900_000).get_candles(
+        result = service(clock_ms=lambda: BASE_TIME + 300_000).get_candles(
             "5m", 1, include_metadata=True
         )
         self.assertEqual(result["candles"], [[BASE_TIME, 10.0, 12.0, 9.0, 11.0, 123.0]])
@@ -76,6 +76,44 @@ class BitunixMarketServiceTests(unittest.TestCase):
         self.assertTrue(result["complete"])
 
     @patch("services.bitunix_market_service.requests.get")
+    def test_stale_closed_candle_by_six_hours_returns_503(self, get):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {"code": 0, "data": [candle(BASE_TIME)]}
+        get.return_value = response
+        with self.assertRaises(BitunixMarketDataError) as caught:
+            service(clock_ms=lambda: BASE_TIME + 6 * 60 * 60_000 + 300_000).get_candles(
+                "5m", 1, include_metadata=True
+            )
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("datos desactualizados", str(caught.exception))
+
+    @patch("services.bitunix_market_service.requests.get")
+    def test_stale_closed_candle_by_thirty_days_returns_503(self, get):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {"code": 0, "data": [candle(BASE_TIME)]}
+        get.return_value = response
+        with self.assertRaises(BitunixMarketDataError) as caught:
+            service(clock_ms=lambda: BASE_TIME + 30 * 24 * 60 * 60_000 + 300_000).get_candles(
+                "5m", 1, include_metadata=True
+            )
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("datos desactualizados", str(caught.exception))
+
+    @patch("services.bitunix_market_service.requests.get")
+    def test_candle_closing_exactly_at_now_is_fresh_and_closed(self, get):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {"code": 0, "data": [candle(BASE_TIME)]}
+        get.return_value = response
+        result = service(clock_ms=lambda: BASE_TIME + 300_000).get_candles(
+            "5m", 1, include_metadata=True
+        )
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["candles"][0][0], BASE_TIME)
+
+    @patch("services.bitunix_market_service.requests.get")
     def test_gap_or_interval_mismatch_is_rejected(self, get):
         response = Mock()
         response.status_code = 200
@@ -98,7 +136,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
         response_newer.json.return_value = {"code": 0, "data": newer}
         response_older.json.return_value = {"code": 0, "data": older}
         get.side_effect = [response_newer, response_older]
-        result = service(clock_ms=lambda: BASE_TIME + 100_000_000).get_candles(
+        result = service(clock_ms=lambda: BASE_TIME + 202 * 300_000).get_candles(
             "5m", 201, include_metadata=True
         )
         self.assertTrue(result["complete"])
@@ -124,7 +162,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
         response.status_code = 200
         response.json.return_value = {"code": 0, "data": [candle()]}
         get.return_value = response
-        result = service(clock_ms=lambda: BASE_TIME + 900_000).get_candles(
+        result = service(clock_ms=lambda: BASE_TIME + 300_000).get_candles(
             "5m", 2, include_metadata=True
         )
         self.assertFalse(result["complete"])
@@ -133,7 +171,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
         self.assertEqual(result["returned"], 1)
         self.assertEqual(result["requested"], 2)
         with self.assertRaises(BitunixMarketDataError):
-            service(clock_ms=lambda: BASE_TIME + 900_000).get_candles("5m", 2)
+            service(clock_ms=lambda: BASE_TIME + 300_000).get_candles("5m", 2)
 
     def test_monthly_interval_is_excluded_and_limit_is_bounded(self):
         market = service()
@@ -168,7 +206,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
                         "code": 0, "data": [candle(**{field: value})],
                     }
                     with self.assertRaises(BitunixMarketDataError):
-                        service(clock_ms=lambda: BASE_TIME + 900_000).get_candles("5m", 1)
+                        service(clock_ms=lambda: BASE_TIME + 300_000).get_candles("5m", 1)
 
     @patch("services.bitunix_market_service.requests.get")
     def test_invalid_ohlcv_candles_and_duplicate_timestamps_are_rejected(self, get):
@@ -183,10 +221,10 @@ class BitunixMarketServiceTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 response.json.return_value = {"code": 0, "data": [candle(**changes)]}
                 with self.assertRaises(BitunixMarketDataError):
-                    service(clock_ms=lambda: BASE_TIME + 900_000).get_candles("5m", 1)
+                    service(clock_ms=lambda: BASE_TIME + 300_000).get_candles("5m", 1)
         response.json.return_value = {"code": 0, "data": [candle(), candle()]}
         with self.assertRaises(BitunixMarketDataError):
-            service(clock_ms=lambda: BASE_TIME + 900_000).get_candles("5m", 2)
+            service(clock_ms=lambda: BASE_TIME + 300_000).get_candles("5m", 2)
 
     @patch("services.bitunix_market_service.requests.get")
     def test_418_and_429_are_retried_with_backoff_then_mapped_to_503(self, get):
