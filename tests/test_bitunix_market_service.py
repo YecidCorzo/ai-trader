@@ -35,6 +35,41 @@ class BitunixMarketServiceTests(unittest.TestCase):
         self.assertEqual(get.call_args.kwargs["params"]["type"], "LAST_PRICE")
 
     @patch("services.bitunix_market_service.requests.get")
+    def test_non_finite_ticker_prices_are_rejected(self, get):
+        response = Mock()
+        get.return_value = response
+        service = BitunixMarketService()
+
+        for value in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(value=value):
+                response.json.return_value = {
+                    "code": 0,
+                    "data": [{"symbol": "SOLUSDT", "lastPrice": value}],
+                }
+                with self.assertRaises(BitunixMarketDataError):
+                    service.get_price()
+
+    @patch("services.bitunix_market_service.requests.get")
+    def test_non_finite_candle_values_are_rejected(self, get):
+        response = Mock()
+        get.return_value = response
+        service = BitunixMarketService()
+        candle = {
+            "time": 1700000000000, "open": "10", "high": "12",
+            "low": "9", "close": "11", "baseVol": "123",
+        }
+
+        for field in ("open", "high", "low", "close", "baseVol"):
+            for value in ("NaN", "Infinity", "-Infinity"):
+                with self.subTest(field=field, value=value):
+                    invalid_candle = {**candle, field: value}
+                    response.json.return_value = {
+                        "code": 0, "data": [invalid_candle],
+                    }
+                    with self.assertRaises(BitunixMarketDataError):
+                        service.get_candles("5m", 1)
+
+    @patch("services.bitunix_market_service.requests.get")
     def test_nonzero_api_code_is_error(self, get):
         response = Mock()
         response.json.return_value = {"code": 10001, "data": None}
