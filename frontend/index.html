@@ -95,6 +95,15 @@
       background: #0b1020; color: #e8edf8; border: 1px solid #263047;
       border-radius: 8px; padding: 11px; min-width: 0;
     }
+    .timeframe-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+    .timeframe-card { background: #0d1526; border: 1px solid #293953; border-radius: 10px; padding: 16px; min-width: 0; }
+    .timeframe-card h3 { margin: 0 0 10px; }
+    .timeframe-signal { font-size: 20px; font-weight: 750; margin: 8px 0; }
+    .timeframe-meta { color: #96a4bc; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+    .consensus { padding: 14px 16px; border: 1px solid #3156a5; border-radius: 10px; background: #101d35; margin-top: 14px; line-height: 1.6; }
+    .consensus strong { font-size: 18px; }
+    .analysis-warning { color: #f0c674; }
+    @media (max-width: 700px) { .timeframe-grid { grid-template-columns: 1fr; } }
     .backtest-run { background: #3156a5; margin-top: 14px; }
     #backtest-result { white-space: pre-wrap; line-height: 1.6; margin-top: 14px; color: #d7e0ef; }
     #signal-box { white-space: pre-wrap; line-height: 1.6; margin-top: 14px; color: #d7e0ef; }
@@ -113,7 +122,7 @@
 <body>
   <header>
     <h1>◈ AI TRADER</h1>
-    <span class="demo">● PAPER TRADING</span>
+    <span class="demo">● PAPER · SOLO ANÁLISIS</span>
   </header>
 
   <main>
@@ -147,7 +156,18 @@
       </div>
       <div id="signal-box" class="signal-box">Señal: Cargando...
       </div>
-      <div id="status" class="status">Modo demo: no se ejecutan operaciones.</div>
+      <div id="status" class="status">Modo PAPER · análisis de solo lectura; no se ejecutan operaciones.</div>
+    </section>
+
+    <section class="card" aria-labelledby="multi-timeframe-heading">
+      <h2 id="multi-timeframe-heading">Confirmación multi-timeframe <span class="muted">· 1h / 4h</span></h2>
+      <p class="muted">Analiza velas cerradas de ambos intervalos. Solo muestra LONG o SHORT como consenso cuando los dos timeframes coinciden; cualquier discrepancia o dato incompleto produce NEUTRAL.</p>
+      <button class="backtest-run" id="refresh-multi-timeframe" type="button">Actualizar análisis 1h / 4h</button>
+      <div class="analysis-warning" role="note">Estrategia NO_GO — niveles ilustrativos, sin ventaja demostrada; la regla 1h/4h no está validada.</div>
+      <div id="multi-timeframe-consensus" class="consensus status" aria-live="polite">Consultando confirmación multi-timeframe…</div>
+      <div id="multi-timeframe-results" class="timeframe-grid">
+        <div class="timeframe-card muted">Cargando análisis de 1h y 4h…</div>
+      </div>
     </section>
 
     <section class="card">
@@ -197,15 +217,119 @@
           <tr><th>Par</th><th>Dirección</th><th>Estado</th></tr>
         </thead>
         <tbody id="positions">
-          <tr><td colspan="3" class="muted">Las posiciones aparecerán cuando exista una cuenta PAPER configurada.</td></tr>
+          <tr><td colspan="3" class="muted">El dashboard todavía no está conectado a una cuenta PAPER autenticada; no se muestran posiciones inventadas.</td></tr>
         </tbody>
       </table>
     </section>
   </main>
 
   <script src="https://unpkg.com/lightweight-charts@5.3.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="/dashboard/multi_timeframe.js"></script>
   <script>
-    async function loadDashboard() {
+    function formatAnalysisValue(value, digits = 4) {
+  if (value == null || value === "" || !Number.isFinite(Number(value))) return "N/D";
+  return Number(value).toFixed(digits);
+}
+
+const multiTimeframeRequestGate = window.AITraderMultiTimeframe.createRequestGate();
+
+async function loadMultiTimeframe() {
+  // The 60-second refresh must not overlap a slow provider request.
+  if (!multiTimeframeRequestGate.enter()) return;
+
+  const button = document.getElementById("refresh-multi-timeframe");
+  const consensusBox = document.getElementById("multi-timeframe-consensus");
+  const resultsBox = document.getElementById("multi-timeframe-results");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Analizando 1h / 4h…";
+  }
+  consensusBox.textContent = "Consultando velas cerradas de 1h y 4h…";
+  resultsBox.textContent = "Calculando indicadores…";
+
+  try {
+    const response = await fetch("/api/signal/multi-timeframe");
+    const data = await response.json();
+    if (!response.ok || data.error || !data.timeframes) {
+      throw new Error(data.detail || "Análisis multi-timeframe no disponible");
+    }
+
+    const consensus = window.AITraderMultiTimeframe.resolveConsensus(data);
+    consensusBox.replaceChildren();
+    const heading = document.createElement("strong");
+    heading.textContent = "Consenso: " + consensus;
+    consensusBox.appendChild(heading);
+    const reason = document.createElement("div");
+    reason.textContent = data.reason || "Sin explicación disponible.";
+    consensusBox.appendChild(reason);
+    const note = document.createElement("div");
+    note.className = "timeframe-meta";
+    note.textContent = "Regla: todos los timeframes disponibles deben coincidir. Este resultado es análisis de solo lectura; no crea operaciones.";
+    consensusBox.appendChild(note);
+
+    resultsBox.replaceChildren();
+    for (const interval of ["1h", "4h"]) {
+      const item = data.timeframes[interval] || { available: false, signal: "NEUTRAL", reason: "timeframe_not_returned" };
+      const card = document.createElement("article");
+      card.className = "timeframe-card";
+      const title = document.createElement("h3");
+      title.textContent = interval + " · " + (item.available ? "Vela cerrada" : "No disponible");
+      card.appendChild(title);
+      const signal = document.createElement("div");
+      signal.className = "timeframe-signal";
+      signal.textContent = item.available
+        ? String(item.signal || "NEUTRAL").toUpperCase()
+        : "NEUTRAL";
+      card.appendChild(signal);
+
+      const indicators = item.indicators || {};
+      const details = document.createElement("div");
+      details.className = "timeframe-meta";
+      if (item.available) {
+        details.textContent = [
+          "Cierre: " + formatAnalysisValue(item.close),
+          "EMA 9 / 21 / 50: " + formatAnalysisValue(indicators.ema_9) + " / " + formatAnalysisValue(indicators.ema_21) + " / " + formatAnalysisValue(indicators.ema_50),
+          "RSI 14: " + formatAnalysisValue(indicators.rsi_14, 2),
+          "MACD histograma: " + formatAnalysisValue(indicators.macd?.histogram, 6),
+          "VWAP UTC: " + formatAnalysisValue(indicators.vwap_utc_day),
+          "ATR 14: " + formatAnalysisValue(indicators.atr_14),
+          "Puntuación de reglas: " + formatAnalysisValue(item.score, 0) + "/100 (no es probabilidad)",
+          "Estrategia NO_GO — niveles ilustrativos, sin ventaja demostrada; la regla 1h/4h no está validada",
+          "Entrada / SL: " + formatAnalysisValue(item.entry) + " / " + formatAnalysisValue(item.stop_loss),
+          "TP1 / TP2: " + formatAnalysisValue(item.take_profit_1) + " / " + formatAnalysisValue(item.take_profit_2),
+          "Invalidación: " + formatAnalysisValue(item.invalidation?.price),
+          "Velas cerradas: " + (item.candles_received ?? "N/D"),
+          "Última vela (UTC): " + (item.last_closed_time ? new Date(item.last_closed_time * 1000).toISOString() : "N/D")
+        ].join("\n");
+      } else {
+        details.className += " analysis-warning";
+        details.textContent = "Sin señal utilizable: " + (item.reason || "datos insuficientes o proveedor no disponible") + ". El consenso permanece NEUTRAL.";
+      }
+      card.appendChild(details);
+
+      if (Array.isArray(item.reasons) && item.reasons.length) {
+        const reasons = document.createElement("p");
+        reasons.className = "timeframe-meta";
+        reasons.textContent = "Razones: " + item.reasons.join("; ");
+        card.appendChild(reasons);
+      }
+      resultsBox.appendChild(card);
+    }
+  } catch (error) {
+    consensusBox.textContent = "Análisis multi-timeframe no disponible: " + error.message;
+    resultsBox.textContent = "No se muestran señales parciales como consenso.";
+  } finally {
+    multiTimeframeRequestGate.leave();
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Actualizar análisis 1h / 4h";
+    }
+  }
+}
+
+document.getElementById("refresh-multi-timeframe").addEventListener("click", loadMultiTimeframe);
+
+async function loadDashboard() {
     const status = document.getElementById("status");
 
     try {
@@ -391,6 +515,8 @@ document.getElementById("run-walk-forward").addEventListener("click", runWalkFor
 
 loadDashboard();
 loadPrice();
+loadMultiTimeframe();
+setInterval(loadMultiTimeframe, 60000);
 setInterval(loadPrice, 5000);
 
 
@@ -515,6 +641,7 @@ async function loadSignal() {
     const lines = [
       "Señal: " + String(data.signal).toUpperCase(),
       "Puntuación de reglas: " + (data.score ?? "N/D") + "/100 (no es probabilidad)",
+      "Estrategia NO_GO — niveles ilustrativos, sin ventaja demostrada; la regla 1h/4h no está validada",
       "Entrada de referencia: " + formatPrice(data.entry) + " USDT",
       "Stop Loss: " + formatPrice(data.stop_loss) + " USDT",
       "Take Profit 1: " + formatPrice(data.take_profit_1) + " USDT",
