@@ -4,11 +4,15 @@ Only public market-data endpoints are implemented. No authentication,
 account, position, or order functionality exists in this adapter.
 """
 from __future__ import annotations
+
+import math
+
 import requests
 
 
 class BitunixMarketDataError(RuntimeError):
     """A Bitunix public market-data failure safe to expose as HTTP 502/503."""
+
     def __init__(self, message: str, *, status_code: int = 503):
         super().__init__(message)
         self.status_code = status_code
@@ -76,8 +80,8 @@ class BitunixMarketService:
         )
         try:
             price = float(ticker["lastPrice"])
-            if price <= 0:
-                raise ValueError("non-positive price")
+            if not math.isfinite(price) or price <= 0:
+                raise ValueError("non-finite or non-positive price")
             return price
         except (TypeError, ValueError, KeyError):
             raise BitunixMarketDataError(
@@ -115,10 +119,16 @@ class BitunixMarketService:
             if not batch:
                 break
             try:
-                normalized = [[
-                    int(item["time"]), float(item["open"]), float(item["high"]),
-                    float(item["low"]), float(item["close"]), float(item["baseVol"]),
-                ] for item in batch]
+                normalized = []
+                for item in batch:
+                    candle = [
+                        int(item["time"]), float(item["open"]), float(item["high"]),
+                        float(item["low"]), float(item["close"]), float(item["baseVol"]),
+                    ]
+                    if not all(math.isfinite(value) for value in candle[1:]):
+                        raise ValueError("non-finite candle value")
+                    normalized.append(candle)
+
                 normalized.sort(key=lambda candle: candle[0])
                 existing = {int(candle[0]) for candle in candles}
                 normalized = [
@@ -129,7 +139,7 @@ class BitunixMarketService:
                     break
                 candles = normalized + candles
                 end_time = int(normalized[0][0])
-            except (TypeError, ValueError, KeyError, IndexError):
+            except (TypeError, ValueError, KeyError, IndexError, OverflowError):
                 raise BitunixMarketDataError(
                     "Bitunix returned malformed candle data", status_code=502
                 ) from None
