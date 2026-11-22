@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import requests
+from datetime import datetime, timezone
 
 
 class MarketDataError(RuntimeError):
@@ -53,18 +54,22 @@ class MarketService:
                 status_code=502,
             ) from error
 
-    def get_price(self):
+    def get_price_snapshot(self):
         data = self._request_json("ticker/price", {"symbol": self.symbol})
+        retrieved_at = datetime.now(timezone.utc)
         try:
             price = float(data["price"])
             if not price > 0:
                 raise ValueError("non-positive price")
-            return price
+            return {"price": price, "retrieved_at": retrieved_at}
         except (KeyError, TypeError, ValueError) as error:
             raise MarketDataError(
                 "Binance returned an invalid ticker price",
                 status_code=502,
             ) from error
+
+    def get_price(self):
+        return self.get_price_snapshot()["price"]
 
     @staticmethod
     def _filter_closed_candles(candles, now_ms):
