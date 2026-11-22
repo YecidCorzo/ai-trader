@@ -63,10 +63,6 @@ class PaperReconciliationFiniteAmountTests(unittest.TestCase):
             reconcile_realized_pnl(self.connection, "account-1")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PaperExecutionInvalidLedgerTests(unittest.TestCase):
     def test_invalid_ledger_value_halts_account_entries(self):
         from types import SimpleNamespace
@@ -94,3 +90,8 @@ class PaperExecutionInvalidLedgerTests(unittest.TestCase):
         self.assertEqual(result["error"], "PAPER_LEDGER_INVALID")
         self.assertTrue(result["circuit_breaker"]["halted"])
         breaker_factory.assert_called_once_with(service._connection, "account-1")
+
+
+
+if __name__ == "__main__":
+    unittest.main()
