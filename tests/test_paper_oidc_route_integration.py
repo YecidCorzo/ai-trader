@@ -786,15 +786,31 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
                     (account_id,),
                 ).fetchall()
                 self.assertEqual(len(rows), 2)
-                connection.execute(
-                    "UPDATE paper_account_events SET amount = ? WHERE id = ?",
-                    (str(Decimal(rows[0][1]) + Decimal("1")), rows[0][0]),
-                )
-                connection.execute(
-                    "UPDATE paper_account_events SET amount = ? WHERE id = ?",
-                    (str(Decimal(rows[1][1]) - Decimal("1")), rows[1][0]),
-                )
-                connection.commit()
+                # The production ledger is append-only. Temporarily remove its
+                # DB triggers only inside this disposable test database to
+                # model historical/on-disk corruption, then restore them.
+                triggers = connection.execute(
+                    """SELECT name, sql FROM sqlite_master
+                       WHERE type = 'trigger' AND tbl_name = 'paper_account_events'"""
+                ).fetchall()
+                self.assertTrue(triggers, "append-only protection trigger must exist")
+                for trigger_name, _ in triggers:
+                    escaped_name = trigger_name.replace('"', '""')
+                    connection.execute(f'DROP TRIGGER "{escaped_name}"')
+                try:
+                    connection.execute(
+                        "UPDATE paper_account_events SET amount = ? WHERE id = ?",
+                        (str(Decimal(rows[0][1]) + Decimal("1")), rows[0][0]),
+                    )
+                    connection.execute(
+                        "UPDATE paper_account_events SET amount = ? WHERE id = ?",
+                        (str(Decimal(rows[1][1]) - Decimal("1")), rows[1][0]),
+                    )
+                    connection.commit()
+                finally:
+                    for _, trigger_sql in triggers:
+                        connection.execute(trigger_sql)
+                    connection.commit()
 
             mismatch = self.client.post(
                 f"/api/paper/accounts/{account_id}/reconcile",
