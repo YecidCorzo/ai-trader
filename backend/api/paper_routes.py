@@ -389,7 +389,7 @@ def reconcile_paper_account(
         _authorization(connection).require_account(principal, account_id)
         return {
             "mode": "paper",
-            "reconciliation": execution.reconcile_account(account_id),
+            "reconciliation": execution.reconcile_account(account_id, principal=principal),
             "live_trading_authorized": False,
         }
     except Exception as error:
