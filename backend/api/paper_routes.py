@@ -41,6 +41,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+def _serialize_reconciliation_amounts(result: dict) -> dict:
+    """Convert exact Decimal totals to strings before FastAPI JSON encoding."""
+    serialized = dict(result)
+    for field in ("trade_realized_pnl", "event_realized_pnl", "difference"):
+        if field in serialized:
+            serialized[field] = str(serialized[field])
+    return serialized
+
+
 router = APIRouter(
     prefix="/api/paper",
     tags=["PAPER accounts"],
@@ -389,9 +399,7 @@ def reconcile_paper_account(
         _authorization(connection).require_account(principal, account_id)
         reconciliation = execution.reconcile_account(account_id, principal=principal)
         # Preserve exact Decimal precision across FastAPI's JSON encoder.
-        for field in ("trade_realized_pnl", "event_realized_pnl", "difference"):
-            if field in reconciliation:
-                reconciliation[field] = str(reconciliation[field])
+        reconciliation = _serialize_reconciliation_amounts(reconciliation)
         return {
             "mode": "paper",
             "reconciliation": reconciliation,
