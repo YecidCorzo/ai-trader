@@ -377,6 +377,25 @@ def reset_paper_account(
         _raise_paper_error(error)
 
 
+@router.post("/accounts/{account_id}/reconcile")
+def reconcile_paper_account(
+    account_id: str,
+    connection: sqlite3.Connection = Depends(get_db_connection),
+    execution: PaperExecutionService = Depends(get_paper_execution_service),
+    principal: VerifiedPrincipal = Depends(get_verified_principal),
+):
+    """Explicitly reconcile realized P&L; halt new PAPER entries on mismatch."""
+    try:
+        _authorization(connection).require_account(principal, account_id)
+        return {
+            "mode": "paper",
+            "reconciliation": execution.reconcile_account(account_id),
+            "live_trading_authorized": False,
+        }
+    except Exception as error:
+        _raise_paper_error(error)
+
+
 @router.get("/accounts/{account_id}/events")
 def list_paper_account_events(
     account_id: str,
