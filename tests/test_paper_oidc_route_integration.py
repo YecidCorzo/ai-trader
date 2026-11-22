@@ -755,6 +755,9 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
             self.assertEqual(reconciled.status_code, 200, reconciled.text)
             result = reconciled.json()["reconciliation"]
             self.assertTrue(result["consistent"])
+            self.assertIsInstance(result["trade_realized_pnl"], str)
+            self.assertIsInstance(result["event_realized_pnl"], str)
+            self.assertIsInstance(result["difference"], str)
             self.assertEqual(result["closed_trade_count"], 2)
             self.assertEqual(result["realized_event_count"], 2)
             self.assertEqual(
