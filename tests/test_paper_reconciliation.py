@@ -65,3 +65,32 @@ class PaperReconciliationFiniteAmountTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PaperExecutionInvalidLedgerTests(unittest.TestCase):
+    def test_invalid_ledger_value_halts_account_entries(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from backend.services.paper_execution import PaperExecutionService
+
+        service = PaperExecutionService.__new__(PaperExecutionService)
+        service._connection = object()
+        service._accounts = SimpleNamespace(get_account=lambda account_id: {"id": account_id})
+        halted = {"halted": True, "reason": "invalid ledger"}
+        breaker = SimpleNamespace(halt=lambda *args, **kwargs: halted)
+
+        with patch(
+            "backend.services.paper_reconciliation.reconcile_realized_pnl",
+            side_effect=ValueError("malformed or non-finite decimal"),
+        ), patch(
+            "backend.services.paper_execution.CircuitBreaker",
+            return_value=breaker,
+        ) as breaker_factory:
+            result = service.reconcile_account("account-1")
+
+        self.assertFalse(result["consistent"])
+        self.assertEqual(result["alert"], "PAPER_LEDGER_INCONSISTENT")
+        self.assertEqual(result["error"], "PAPER_LEDGER_INVALID")
+        self.assertTrue(result["circuit_breaker"]["halted"])
+        breaker_factory.assert_called_once_with(service._connection, "account-1")
