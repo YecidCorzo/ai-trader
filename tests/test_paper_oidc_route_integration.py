@@ -1,6 +1,7 @@
 """Route-level PAPER OIDC integration using ephemeral test keys and SQLite."""
 
 import os
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -669,6 +670,175 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
                 stale_read.json()["detail"],
                 "Precio de mercado no disponible o desactualizado",
             )
+        finally:
+            app.dependency_overrides.pop(get_price_provider, None)
+
+
+    def test_realized_ledger_reconciliation_matches_lifecycle_and_halts_on_mismatch(self):
+        app.dependency_overrides[get_price_provider] = FixedPriceProvider
+        token = self.token("owner-ledger-reconciliation")
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            created = self.client.post(
+                "/api/paper/accounts",
+                headers=headers,
+                json={
+                    "name": "Ledger reconciliation lifecycle",
+                    "quote_currency": "USDT",
+                    "opening_capital": "1000",
+                    "idempotency_key": "ledger-reconciliation-opening",
+                },
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            account_id = created.json()["account"]["id"]
+
+            realized_values = []
+            for symbol, key in (
+                ("SOLUSDT", "ledger-reconciliation-trade-one"),
+                ("BTCUSDT", "ledger-reconciliation-trade-two"),
+            ):
+                opened = self.client.post(
+                    f"/api/paper/accounts/{account_id}/trades",
+                    headers=headers,
+                    json={
+                        "symbol": symbol,
+                        "strategy": "ledger-reconciliation-test",
+                        "side": "LONG",
+                        "stop_price": "95",
+                        "idempotency_key": key,
+                    },
+                )
+                self.assertEqual(opened.status_code, 201, opened.text)
+                trade_id = opened.json()["trade"]["id"]
+
+                closed = self.client.post(
+                    f"/api/paper/accounts/{account_id}/trades/{trade_id}/close",
+                    headers=headers,
+                    json={"exit_reason": "ledger reconciliation acceptance"},
+                )
+                self.assertEqual(closed.status_code, 200, closed.text)
+                closed_trade = closed.json()["trade"]
+                self.assertEqual(closed_trade["status"], "CLOSED")
+                realized_values.append(Decimal(str(closed_trade["realized_pnl"])))
+
+            events_response = self.client.get(
+                f"/api/paper/accounts/{account_id}/events",
+                headers=headers,
+            )
+            self.assertEqual(events_response.status_code, 200, events_response.text)
+            realized_events = [
+                event for event in events_response.json()["account_events"]
+                if event["event_type"] == "TRADE_REALIZED_PNL"
+            ]
+            self.assertEqual(len(realized_events), 2)
+            self.assertEqual(
+                sorted(Decimal(event["amount"]) for event in realized_events),
+                sorted(realized_values),
+            )
+
+            account_response = self.client.get(
+                f"/api/paper/accounts/{account_id}",
+                headers=headers,
+            )
+            self.assertEqual(account_response.status_code, 200, account_response.text)
+            account = account_response.json()
+            expected_balance = Decimal("1000") + sum(realized_values, Decimal("0"))
+            self.assertEqual(Decimal(account["balance"]), expected_balance)
+            self.assertEqual(Decimal(account["equity"]), expected_balance)
+            self.assertEqual(Decimal(account["free_cash"]), expected_balance)
+            self.assertEqual(account["open_positions"], [])
+
+            reconciled = self.client.post(
+                f"/api/paper/accounts/{account_id}/reconcile",
+                headers=headers,
+            )
+            self.assertEqual(reconciled.status_code, 200, reconciled.text)
+            result = reconciled.json()["reconciliation"]
+            self.assertTrue(result["consistent"])
+            self.assertIsInstance(result["trade_realized_pnl"], str)
+            self.assertIsInstance(result["event_realized_pnl"], str)
+            self.assertIsInstance(result["difference"], str)
+            self.assertEqual(result["closed_trade_count"], 2)
+            self.assertEqual(result["realized_event_count"], 2)
+            self.assertEqual(
+                Decimal(str(result["trade_realized_pnl"])),
+                sum(realized_values, Decimal("0")),
+            )
+            self.assertEqual(
+                Decimal(str(result["event_realized_pnl"])),
+                sum(realized_values, Decimal("0")),
+            )
+            self.assertEqual(Decimal(str(result["difference"])), Decimal("0"))
+            self.assertFalse(result["circuit_breaker"]["halted"])
+
+            # A second identity must not be able to invoke the account-scoped
+            # reconciliation action.
+            foreign = self.client.post(
+                f"/api/paper/accounts/{account_id}/reconcile",
+                headers={"Authorization": f"Bearer {self.token('owner-ledger-foreign')}"},
+            )
+            self.assertEqual(foreign.status_code, 404, foreign.text)
+
+            # Offset two postings in opposite directions: aggregate P&L remains
+            # unchanged, but per-trade reconciliation must still detect both.
+            with sqlite3.connect(self.db_path) as connection:
+                rows = connection.execute(
+                    """SELECT id, amount FROM paper_account_events
+                       WHERE account_id = ? AND event_type = 'TRADE_REALIZED_PNL'
+                       ORDER BY sequence""",
+                    (account_id,),
+                ).fetchall()
+                self.assertEqual(len(rows), 2)
+                # The production ledger is append-only. Temporarily remove its
+                # DB triggers only inside this disposable test database to
+                # model historical/on-disk corruption, then restore them.
+                triggers = connection.execute(
+                    """SELECT name, sql FROM sqlite_master
+                       WHERE type = 'trigger' AND tbl_name = 'paper_account_events'"""
+                ).fetchall()
+                self.assertTrue(triggers, "append-only protection trigger must exist")
+                for trigger_name, _ in triggers:
+                    escaped_name = trigger_name.replace('"', '""')
+                    connection.execute(f'DROP TRIGGER "{escaped_name}"')
+                try:
+                    connection.execute(
+                        "UPDATE paper_account_events SET amount = ? WHERE id = ?",
+                        (str(Decimal(rows[0][1]) + Decimal("1")), rows[0][0]),
+                    )
+                    connection.execute(
+                        "UPDATE paper_account_events SET amount = ? WHERE id = ?",
+                        (str(Decimal(rows[1][1]) - Decimal("1")), rows[1][0]),
+                    )
+                    connection.commit()
+                finally:
+                    for _, trigger_sql in triggers:
+                        connection.execute(trigger_sql)
+                    connection.commit()
+
+            mismatch = self.client.post(
+                f"/api/paper/accounts/{account_id}/reconcile",
+                headers=headers,
+            )
+            self.assertEqual(mismatch.status_code, 200, mismatch.text)
+            mismatch_result = mismatch.json()["reconciliation"]
+            self.assertFalse(mismatch_result["consistent"])
+            self.assertEqual(Decimal(str(mismatch_result["difference"])), Decimal("0"))
+            self.assertEqual(len(mismatch_result["mismatched_trade_ids"]), 2)
+            self.assertEqual(mismatch_result["alert"], "PAPER_LEDGER_INCONSISTENT")
+            self.assertTrue(mismatch_result["circuit_breaker"]["halted"])
+
+            blocked_open = self.client.post(
+                f"/api/paper/accounts/{account_id}/trades",
+                headers=headers,
+                json={
+                    "symbol": "SOLUSDT",
+                    "strategy": "must-remain-halted",
+                    "side": "LONG",
+                    "stop_price": "95",
+                    "idempotency_key": "ledger-mismatch-must-block-entry",
+                },
+            )
+            self.assertEqual(blocked_open.status_code, 409, blocked_open.text)
         finally:
             app.dependency_overrides.pop(get_price_provider, None)
 

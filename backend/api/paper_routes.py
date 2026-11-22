@@ -41,6 +41,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+def _serialize_reconciliation_amounts(result: dict) -> dict:
+    """Convert exact Decimal totals to strings before FastAPI JSON encoding."""
+    serialized = dict(result)
+    for field in ("trade_realized_pnl", "event_realized_pnl", "difference"):
+        if field in serialized:
+            serialized[field] = str(serialized[field])
+    return serialized
+
+
 router = APIRouter(
     prefix="/api/paper",
     tags=["PAPER accounts"],
@@ -373,6 +383,28 @@ def reset_paper_account(
             confirmed_by=principal.subject,
             actor=_actor(principal),
         )
+    except Exception as error:
+        _raise_paper_error(error)
+
+
+@router.post("/accounts/{account_id}/reconcile")
+def reconcile_paper_account(
+    account_id: str,
+    connection: sqlite3.Connection = Depends(get_db_connection),
+    execution: PaperExecutionService = Depends(get_paper_execution_service),
+    principal: VerifiedPrincipal = Depends(get_verified_principal),
+):
+    """Explicitly reconcile realized P&L; halt new PAPER entries on mismatch."""
+    try:
+        _authorization(connection).require_account(principal, account_id)
+        reconciliation = execution.reconcile_account(account_id, principal=principal)
+        # Preserve exact Decimal precision across FastAPI's JSON encoder.
+        reconciliation = _serialize_reconciliation_amounts(reconciliation)
+        return {
+            "mode": "paper",
+            "reconciliation": reconciliation,
+            "live_trading_authorized": False,
+        }
     except Exception as error:
         _raise_paper_error(error)
 

@@ -478,7 +478,7 @@ class PaperExecutionService:
                 raise
             closed.append(result)
         return closed
-    def reconcile_account(self, account_id: str) -> dict:
+    def reconcile_account(self, account_id: str, *, principal: VerifiedPrincipal | None = None) -> dict:
         """Expose reconciliation and halt PAPER entries if the ledger is inconsistent."""
         try:
             try:
@@ -488,11 +488,36 @@ class PaperExecutionService:
         except ImportError:
             from services.paper_reconciliation import reconcile_realized_pnl
         self._accounts.get_account(account_id)
-        result = reconcile_realized_pnl(self._connection, account_id)
+        actor = (
+            {"type": "verified_principal", "issuer": principal.issuer, "subject": principal.subject}
+            if principal is not None
+            else {"type": "system", "name": "paper_reconciliation"}
+        )
+        updated_by = principal.subject if principal is not None else "reconciliation"
+        try:
+            result = reconcile_realized_pnl(self._connection, account_id)
+        except ValueError:
+            # Invalid persisted decimals are a ledger-integrity failure too.
+            # Never let malformed values bypass the account's entry circuit breaker.
+            breaker = CircuitBreaker(self._connection, account_id)
+            status = breaker.halt(
+                "PAPER ledger contains invalid realized-P&L data",
+                updated_by=updated_by,
+                actor=actor,
+            )
+            return {
+                "account_id": account_id,
+                "consistent": False,
+                "alert": "PAPER_LEDGER_INCONSISTENT",
+                "error": "PAPER_LEDGER_INVALID",
+                "circuit_breaker": status,
+            }
         if not result["consistent"]:
             result["alert"] = "PAPER_LEDGER_INCONSISTENT"
             result["circuit_breaker"] = CircuitBreaker(self._connection, account_id).halt(
-                "PAPER ledger reconciliation mismatch", updated_by="reconciliation"
+                "PAPER ledger reconciliation mismatch",
+                updated_by=updated_by,
+                actor=actor,
             )
         else:
             result["alert"] = None
