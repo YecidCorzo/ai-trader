@@ -1,4 +1,6 @@
 import unittest
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from unittest.mock import Mock, patch
 import requests
 
@@ -260,6 +262,20 @@ class BitunixMarketServiceTests(unittest.TestCase):
             service().get_price()
         self.assertEqual(caught.exception.status_code, 503)
         self.assertEqual(get.call_count, 1)
+
+    def test_retry_after_http_date_is_parsed(self):
+        retry_at = datetime.now(timezone.utc) + timedelta(seconds=60)
+        parsed = BitunixMarketService._parse_retry_after_seconds(
+            format_datetime(retry_at, usegmt=True)
+        )
+        self.assertIsNotNone(parsed)
+        self.assertGreater(parsed, 59.0)
+        self.assertLess(parsed, 61.0)
+
+    def test_invalid_retry_after_returns_none_for_bounded_fallback(self):
+        self.assertIsNone(BitunixMarketService._parse_retry_after_seconds("not-a-date"))
+        self.assertIsNone(BitunixMarketService._parse_retry_after_seconds("NaN"))
+        self.assertIsNone(BitunixMarketService._parse_retry_after_seconds("Infinity"))
 
     @patch("services.bitunix_market_service.requests.get")
     def test_429_without_retry_after_uses_bounded_fallback_and_retries(self, get):
