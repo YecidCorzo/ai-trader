@@ -174,7 +174,7 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
         ]
         snapshot = market(sleep=sleeps.append).get_price_snapshot()
         self.assertEqual(snapshot["price"], 123.45)
-        self.assertEqual(sleeps, [1.25])
+        self.assertEqual(sleeps, [0.15, 1.25])
         self.assertEqual(get.call_count, 3)
 
     @patch("services.coinbase_market_service.requests.get")
