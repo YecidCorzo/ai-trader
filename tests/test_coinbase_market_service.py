@@ -67,8 +67,8 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
         candles = [raw_candle(BASE_TIME + index * HOUR) for index in range(301)]
         get.side_effect = [
             response(products_payload()),
-            response(candles[1:]),
-            response(candles[:1]),
+            response(candles[2:]),
+            response(candles[:2]),
         ]
         result = market(now_ms=BASE_TIME + 301 * HOUR).get_candles(
             "1h", 301, closed_only=False, include_metadata=True
