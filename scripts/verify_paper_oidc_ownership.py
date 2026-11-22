@@ -4,12 +4,12 @@
 Creates one persistent account with fictional capital for identity A, then
 verifies identity B cannot discover or operate on it. It never opens trades,
 connects to an exchange account, or submits exchange orders.
-
-Run only against a dedicated PAPER acceptance database.
 """
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import os
 import sys
 from decimal import Decimal, InvalidOperation
@@ -24,6 +24,47 @@ def required_env(name: str) -> str:
     if not value:
         raise ValueError(f"Falta la variable obligatoria {name}")
     return value
+
+
+def _unverified_identity_claims(token: str) -> tuple[str, str]:
+    """Read iss/sub only to sanity-check test fixtures; never authenticate a token.
+
+    The API remains responsible for signature, issuer, audience, expiry and
+    authorization validation. This local check only prevents two different
+    token strings for the same OIDC subject from masquerading as two users.
+    """
+    parts = token.split(".")
+    if len(parts) != 3 or not parts[1]:
+        raise ValueError("Los tokens de aceptación deben tener formato JWT.")
+
+    try:
+        payload_segment = parts[1]
+        payload_segment += "=" * (-len(payload_segment) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_segment).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("No se pudieron leer los claims de identidad del token.") from None
+
+    if not isinstance(payload, dict):
+        raise ValueError("El payload JWT de aceptación debe ser un objeto.")
+
+    issuer = payload.get("iss")
+    subject = payload.get("sub")
+    if not isinstance(issuer, str) or not issuer.strip():
+        raise ValueError("El token de aceptación no contiene un issuer válido.")
+    if not isinstance(subject, str) or not subject.strip():
+        raise ValueError("El token de aceptación no contiene un subject válido.")
+    return issuer.strip(), subject.strip()
+
+
+def _ensure_distinct_test_identities(token_a: str, token_b: str) -> None:
+    """Require two subjects from the same OIDC issuer without trusting claims."""
+    issuer_a, subject_a = _unverified_identity_claims(token_a)
+    issuer_b, subject_b = _unverified_identity_claims(token_b)
+
+    if issuer_a != issuer_b:
+        raise ValueError("Los dos usuarios de aceptación deben pertenecer al mismo issuer OIDC.")
+    if subject_a == subject_b:
+        raise ValueError("Los tokens pertenecen al mismo subject OIDC; usa dos usuarios de prueba distintos.")
 
 
 def expect_status(label: str, response: requests.Response, expected: int) -> None:
@@ -95,6 +136,7 @@ def main() -> int:
         raise ValueError("Para hosts no locales, AI_TRADER_BASE_URL debe usar HTTPS.")
     token_a = required_env("AI_TRADER_TEST_USER_A_TOKEN")
     token_b = required_env("AI_TRADER_TEST_USER_B_TOKEN")
+    _ensure_distinct_test_identities(token_a, token_b)
     opening_capital = required_env("AI_TRADER_TEST_OPENING_CAPITAL")
     quote_currency = required_env("AI_TRADER_TEST_QUOTE_CURRENCY").upper()
 
@@ -106,8 +148,6 @@ def main() -> int:
         raise ValueError("El capital ficticio debe ser positivo y finito.")
     if not quote_currency.isalnum() or not 3 <= len(quote_currency) <= 8:
         raise ValueError("AI_TRADER_TEST_QUOTE_CURRENCY no es válida.")
-    if token_a == token_b:
-        raise ValueError("Las dos variables deben contener tokens distintos de dos identidades.")
 
     session = requests.Session()
     session.headers.update({"User-Agent": "ai-trader-paper-oidc-acceptance/1.0"})
