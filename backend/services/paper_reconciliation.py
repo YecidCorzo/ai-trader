@@ -6,13 +6,21 @@ from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
 
+def _finite_decimal(value: object) -> Decimal:
+    """Parse a persisted amount and reject NaN or infinities."""
+    amount = Decimal(value)
+    if not amount.is_finite():
+        raise ValueError("PAPER realized-P&L ledger contains a non-finite decimal")
+    return amount
+
+
 def reconcile_realized_pnl(connection: sqlite3.Connection, account_id: str) -> dict:
     """Compare every CLOSED trade with exactly one matching account P&L posting.
 
     Both aggregate totals and per-trade reference/amount matching are checked.
     This prevents offsetting posting errors from cancelling in the aggregate.
-    Malformed persisted values fail closed instead of being reported as a
-    consistent ledger.
+    Malformed or non-finite persisted values fail closed instead of being
+    reported as a consistent ledger.
     """
     trades = connection.execute(
         """SELECT id, realized_pnl FROM paper_trades
@@ -28,19 +36,17 @@ def reconcile_realized_pnl(connection: sqlite3.Connection, account_id: str) -> d
     ).fetchall()
     try:
         trade_amounts = {
-            str(row["id"]): Decimal(row["realized_pnl"])
+            str(row["id"]): _finite_decimal(row["realized_pnl"])
             for row in trades
         }
         event_amounts: dict[str, list[Decimal]] = defaultdict(list)
         for row in events:
-            if row["reference_id"] is not None:
-                event_amounts[str(row["reference_id"])].append(Decimal(row["amount"]))
-            else:
-                event_amounts[""].append(Decimal(row["amount"]))
+            reference_id = str(row["reference_id"]) if row["reference_id"] is not None else ""
+            event_amounts[reference_id].append(_finite_decimal(row["amount"]))
         trade_total = sum(trade_amounts.values(), Decimal("0"))
-        event_total = sum((Decimal(row["amount"]) for row in events), Decimal("0"))
+        event_total = sum((amount for postings in event_amounts.values() for amount in postings), Decimal("0"))
     except (InvalidOperation, TypeError, ValueError):
-        raise ValueError("PAPER realized-P&L ledger contains a malformed decimal") from None
+        raise ValueError("PAPER realized-P&L ledger contains a malformed or non-finite decimal") from None
 
     trade_ids = set(trade_amounts)
     event_ids = set(event_amounts)
