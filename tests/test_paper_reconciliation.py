@@ -5,6 +5,7 @@ import unittest
 from decimal import Decimal
 
 from backend.services.paper_reconciliation import reconcile_realized_pnl
+from backend.api.paper_routes import _serialize_reconciliation_amounts
 
 
 class PaperReconciliationFiniteAmountTests(unittest.TestCase):
@@ -49,6 +50,19 @@ class PaperReconciliationFiniteAmountTests(unittest.TestCase):
         self.assertEqual(result["difference"], Decimal("0"))
         self.assertEqual(result["trade_realized_pnl"], Decimal("1.25"))
         self.assertEqual(result["event_realized_pnl"], Decimal("1.25"))
+
+    def test_api_serialization_preserves_large_decimal_precision(self):
+        exact = Decimal("9000000000.00000001")
+        serialized = _serialize_reconciliation_amounts({
+            "trade_realized_pnl": exact,
+            "event_realized_pnl": exact,
+            "difference": Decimal("0.00000001"),
+            "consistent": False,
+        })
+        self.assertEqual(serialized["trade_realized_pnl"], "9000000000.00000001")
+        self.assertEqual(serialized["event_realized_pnl"], "9000000000.00000001")
+        self.assertEqual(serialized["difference"], "1E-8")
+        self.assertIs(serialized["consistent"], False)
 
     def test_duplicate_event_reference_is_reported(self):
         self.add_trade_and_event()
