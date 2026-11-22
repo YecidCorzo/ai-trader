@@ -41,7 +41,7 @@ def reconcile_realized_pnl(connection: sqlite3.Connection, account_id: str) -> d
         }
         event_amounts: dict[str, list[Decimal]] = defaultdict(list)
         for row in events:
-            reference_id = str(row["reference_id"]) if row["reference_id"] is not None else ""
+            reference_id = str(row["reference_id"]) if row["reference_id"] is not None else "<missing-reference-id>"
             event_amounts[reference_id].append(_finite_decimal(row["amount"]))
         trade_total = sum(trade_amounts.values(), Decimal("0"))
         event_total = sum((amount for postings in event_amounts.values() for amount in postings), Decimal("0"))
@@ -69,15 +69,15 @@ def reconcile_realized_pnl(connection: sqlite3.Connection, account_id: str) -> d
         and not orphan_event_trade_ids
         and not duplicate_event_trade_ids
         and not mismatched_trade_ids
-        and "" not in event_amounts
+        and "<missing-reference-id>" not in event_amounts
     )
     return {
         "account_id": account_id,
         "closed_trade_count": len(trades),
         "realized_event_count": len(events),
-        "trade_realized_pnl": trade_total,
-        "event_realized_pnl": event_total,
-        "difference": difference,
+        "trade_realized_pnl": str(trade_total),
+        "event_realized_pnl": str(event_total),
+        "difference": str(difference),
         "missing_event_trade_ids": missing_event_trade_ids,
         "orphan_event_trade_ids": orphan_event_trade_ids,
         "duplicate_event_trade_ids": duplicate_event_trade_ids,
