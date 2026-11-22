@@ -692,29 +692,34 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
             self.assertEqual(created.status_code, 201, created.text)
             account_id = created.json()["account"]["id"]
 
-            opened = self.client.post(
-                f"/api/paper/accounts/{account_id}/trades",
-                headers=headers,
-                json={
-                    "symbol": "SOLUSDT",
-                    "strategy": "ledger-reconciliation-test",
-                    "side": "LONG",
-                    "stop_price": "95",
-                    "idempotency_key": "ledger-reconciliation-trade",
-                },
-            )
-            self.assertEqual(opened.status_code, 201, opened.text)
-            trade_id = opened.json()["trade"]["id"]
+            realized_values = []
+            for symbol, key in (
+                ("SOLUSDT", "ledger-reconciliation-trade-one"),
+                ("BTCUSDT", "ledger-reconciliation-trade-two"),
+            ):
+                opened = self.client.post(
+                    f"/api/paper/accounts/{account_id}/trades",
+                    headers=headers,
+                    json={
+                        "symbol": symbol,
+                        "strategy": "ledger-reconciliation-test",
+                        "side": "LONG",
+                        "stop_price": "95",
+                        "idempotency_key": key,
+                    },
+                )
+                self.assertEqual(opened.status_code, 201, opened.text)
+                trade_id = opened.json()["trade"]["id"]
 
-            closed = self.client.post(
-                f"/api/paper/accounts/{account_id}/trades/{trade_id}/close",
-                headers=headers,
-                json={"exit_reason": "ledger reconciliation acceptance"},
-            )
-            self.assertEqual(closed.status_code, 200, closed.text)
-            closed_trade = closed.json()["trade"]
-            self.assertEqual(closed_trade["status"], "CLOSED")
-            realized_pnl = Decimal(str(closed_trade["realized_pnl"]))
+                closed = self.client.post(
+                    f"/api/paper/accounts/{account_id}/trades/{trade_id}/close",
+                    headers=headers,
+                    json={"exit_reason": "ledger reconciliation acceptance"},
+                )
+                self.assertEqual(closed.status_code, 200, closed.text)
+                closed_trade = closed.json()["trade"]
+                self.assertEqual(closed_trade["status"], "CLOSED")
+                realized_values.append(Decimal(str(closed_trade["realized_pnl"])))
 
             events_response = self.client.get(
                 f"/api/paper/accounts/{account_id}/events",
@@ -725,8 +730,11 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
                 event for event in events_response.json()["account_events"]
                 if event["event_type"] == "TRADE_REALIZED_PNL"
             ]
-            self.assertEqual(len(realized_events), 1)
-            self.assertEqual(Decimal(realized_events[0]["amount"]), realized_pnl)
+            self.assertEqual(len(realized_events), 2)
+            self.assertEqual(
+                sorted(Decimal(event["amount"]) for event in realized_events),
+                sorted(realized_values),
+            )
 
             account_response = self.client.get(
                 f"/api/paper/accounts/{account_id}",
@@ -734,7 +742,7 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(account_response.status_code, 200, account_response.text)
             account = account_response.json()
-            expected_balance = Decimal("1000") + realized_pnl
+            expected_balance = Decimal("1000") + sum(realized_values, Decimal("0"))
             self.assertEqual(Decimal(account["balance"]), expected_balance)
             self.assertEqual(Decimal(account["equity"]), expected_balance)
             self.assertEqual(Decimal(account["free_cash"]), expected_balance)
@@ -747,10 +755,16 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
             self.assertEqual(reconciled.status_code, 200, reconciled.text)
             result = reconciled.json()["reconciliation"]
             self.assertTrue(result["consistent"])
-            self.assertEqual(result["closed_trade_count"], 1)
-            self.assertEqual(result["realized_event_count"], 1)
-            self.assertEqual(Decimal(str(result["trade_realized_pnl"])), realized_pnl)
-            self.assertEqual(Decimal(str(result["event_realized_pnl"])), realized_pnl)
+            self.assertEqual(result["closed_trade_count"], 2)
+            self.assertEqual(result["realized_event_count"], 2)
+            self.assertEqual(
+                Decimal(str(result["trade_realized_pnl"])),
+                sum(realized_values, Decimal("0")),
+            )
+            self.assertEqual(
+                Decimal(str(result["event_realized_pnl"])),
+                sum(realized_values, Decimal("0")),
+            )
             self.assertEqual(Decimal(str(result["difference"])), Decimal("0"))
             self.assertFalse(result["circuit_breaker"]["halted"])
 
@@ -762,19 +776,23 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(foreign.status_code, 404, foreign.text)
 
-            # Simulate persisted-ledger corruption in this isolated test DB.
-            # The reconciliation action must detect it and halt further entries.
+            # Offset two postings in opposite directions: aggregate P&L remains
+            # unchanged, but per-trade reconciliation must still detect both.
             with sqlite3.connect(self.db_path) as connection:
-                row = connection.execute(
+                rows = connection.execute(
                     """SELECT id, amount FROM paper_account_events
-                       WHERE account_id = ? AND event_type = 'TRADE_REALIZED_PNL'""",
+                       WHERE account_id = ? AND event_type = 'TRADE_REALIZED_PNL'
+                       ORDER BY sequence""",
                     (account_id,),
-                ).fetchone()
-                self.assertIsNotNone(row)
-                corrupted_amount = str(Decimal(row[1]) + Decimal("1"))
+                ).fetchall()
+                self.assertEqual(len(rows), 2)
                 connection.execute(
                     "UPDATE paper_account_events SET amount = ? WHERE id = ?",
-                    (corrupted_amount, row[0]),
+                    (str(Decimal(rows[0][1]) + Decimal("1")), rows[0][0]),
+                )
+                connection.execute(
+                    "UPDATE paper_account_events SET amount = ? WHERE id = ?",
+                    (str(Decimal(rows[1][1]) - Decimal("1")), rows[1][0]),
                 )
                 connection.commit()
 
@@ -785,6 +803,8 @@ class PaperOidcRouteIntegrationTests(unittest.TestCase):
             self.assertEqual(mismatch.status_code, 200, mismatch.text)
             mismatch_result = mismatch.json()["reconciliation"]
             self.assertFalse(mismatch_result["consistent"])
+            self.assertEqual(Decimal(str(mismatch_result["difference"])), Decimal("0"))
+            self.assertEqual(len(mismatch_result["mismatched_trade_ids"]), 2)
             self.assertEqual(mismatch_result["alert"], "PAPER_LEDGER_INCONSISTENT")
             self.assertTrue(mismatch_result["circuit_breaker"]["halted"])
 
