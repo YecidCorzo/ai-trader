@@ -157,6 +157,16 @@ curl -i -X POST "$AI_TRADER_BASE_URL/api/paper/accounts/$ACCOUNT_ID/trades/$TRAD
 
 ## 5. Reconcile ledger and ownership
 
+After the controlled trade has been closed, invoke the owner-scoped reconciliation action:
+
+```sh
+curl -fsS -X POST "$AI_TRADER_BASE_URL/api/paper/accounts/$ACCOUNT_ID/reconcile" \
+  -H "Authorization: Bearer $AI_TRADER_ACCESS_TOKEN"
+```
+
+The response compares the sum and count of CLOSED trade realized P&L with the append-only `TRADE_REALIZED_PNL` account events. A consistent result has `consistent: true` and a zero `difference`. If the ledger is inconsistent, the API returns `PAPER_LEDGER_INCONSISTENT` and halts the account's circuit breaker so new PAPER entries are blocked. This is an explicit POST because a mismatch can change account risk state. The action is owner-scoped and does not execute or close trades.
+
+
 ```sh
 curl -fsS "$AI_TRADER_BASE_URL/api/paper/accounts/$ACCOUNT_ID" \
   -H "Authorization: Bearer $AI_TRADER_ACCESS_TOKEN"
