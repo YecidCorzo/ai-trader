@@ -22,7 +22,8 @@ class PaperOidcAcceptanceHelperTests(unittest.TestCase):
 
     def test_rejects_different_tokens_for_same_subject(self):
         first = make_token(subject="user-a")
-        second = make_token(subject="user-a") + ".different"
+        payload = first.split(".")[1]
+        second = f"another-header.{payload}.another-signature"
         with self.assertRaisesRegex(ValueError, "mismo subject"):
             _ensure_distinct_test_identities(first, second)
 
