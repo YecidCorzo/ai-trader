@@ -45,7 +45,48 @@ class PaperReconciliationFiniteAmountTests(unittest.TestCase):
         self.add_trade_and_event()
         result = reconcile_realized_pnl(self.connection, "account-1")
         self.assertTrue(result["consistent"])
-        self.assertEqual(result["difference"], 0)
+        self.assertEqual(result["difference"], "0")
+        self.assertEqual(result["trade_realized_pnl"], "1.25")
+        self.assertEqual(result["event_realized_pnl"], "1.25")
+
+    def test_duplicate_event_reference_is_reported(self):
+        self.add_trade_and_event()
+        self.connection.execute(
+            "INSERT INTO paper_account_events (account_id, event_type, reference_id, amount) VALUES (?, ?, ?, ?)",
+            ("account-1", "TRADE_REALIZED_PNL", "trade-1", "0"),
+        )
+        result = reconcile_realized_pnl(self.connection, "account-1")
+        self.assertFalse(result["consistent"])
+        self.assertEqual(result["duplicate_event_trade_ids"], ["trade-1"])
+
+    def test_orphan_event_reference_is_reported(self):
+        self.add_trade_and_event()
+        self.connection.execute(
+            "INSERT INTO paper_account_events (account_id, event_type, reference_id, amount) VALUES (?, ?, ?, ?)",
+            ("account-1", "TRADE_REALIZED_PNL", "trade-missing", "0"),
+        )
+        result = reconcile_realized_pnl(self.connection, "account-1")
+        self.assertFalse(result["consistent"])
+        self.assertEqual(result["orphan_event_trade_ids"], ["trade-missing"])
+
+    def test_missing_event_for_closed_trade_is_reported(self):
+        self.connection.execute(
+            "INSERT INTO paper_trades (id, paper_account_id, status, realized_pnl) VALUES (?, ?, ?, ?)",
+            ("trade-1", "account-1", "CLOSED", "1.25"),
+        )
+        result = reconcile_realized_pnl(self.connection, "account-1")
+        self.assertFalse(result["consistent"])
+        self.assertEqual(result["missing_event_trade_ids"], ["trade-1"])
+
+    def test_null_event_reference_uses_explicit_marker(self):
+        self.add_trade_and_event()
+        self.connection.execute(
+            "INSERT INTO paper_account_events (account_id, event_type, reference_id, amount) VALUES (?, ?, ?, ?)",
+            ("account-1", "TRADE_REALIZED_PNL", None, "0"),
+        )
+        result = reconcile_realized_pnl(self.connection, "account-1")
+        self.assertFalse(result["consistent"])
+        self.assertEqual(result["orphan_event_trade_ids"], ["<missing-reference-id>"])
 
     def test_non_finite_trade_amount_fails_closed(self):
         self.add_trade_and_event(trade_amount="NaN")
