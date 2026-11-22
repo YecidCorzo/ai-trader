@@ -488,7 +488,23 @@ class PaperExecutionService:
         except ImportError:
             from services.paper_reconciliation import reconcile_realized_pnl
         self._accounts.get_account(account_id)
-        result = reconcile_realized_pnl(self._connection, account_id)
+        try:
+            result = reconcile_realized_pnl(self._connection, account_id)
+        except ValueError:
+            # Invalid persisted decimals are a ledger-integrity failure too.
+            # Never let malformed values bypass the account's entry circuit breaker.
+            breaker = CircuitBreaker(self._connection, account_id)
+            status = breaker.halt(
+                "PAPER ledger contains invalid realized-P&L data",
+                updated_by="reconciliation",
+            )
+            return {
+                "account_id": account_id,
+                "consistent": False,
+                "alert": "PAPER_LEDGER_INCONSISTENT",
+                "error": "PAPER_LEDGER_INVALID",
+                "circuit_breaker": status,
+            }
         if not result["consistent"]:
             result["alert"] = "PAPER_LEDGER_INCONSISTENT"
             result["circuit_breaker"] = CircuitBreaker(self._connection, account_id).halt(
