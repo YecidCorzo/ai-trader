@@ -2,6 +2,7 @@
 
 import sqlite3
 import unittest
+from decimal import Decimal
 
 from backend.services.paper_reconciliation import reconcile_realized_pnl
 
