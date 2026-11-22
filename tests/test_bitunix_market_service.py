@@ -256,7 +256,7 @@ class BitunixMarketServiceTests(unittest.TestCase):
         self.assertEqual(second["price"], 150.25)
         self.assertAlmostEqual(
             (first["retrieved_at"] - second["retrieved_at"]).total_seconds(),
-            -2.0,
+            2.0,
             delta=0.05,
         )
         self.assertEqual(get.call_count, 1)
