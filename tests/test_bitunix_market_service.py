@@ -227,28 +227,52 @@ class BitunixMarketServiceTests(unittest.TestCase):
             service(clock_ms=lambda: BASE_TIME + 300_000).get_candles("5m", 2)
 
     @patch("services.bitunix_market_service.requests.get")
-    def test_418_and_429_are_retried_with_backoff_then_mapped_to_503(self, get):
+    def test_418_is_not_retried(self, get):
+        limited = Mock()
+        limited.status_code = 418
+        limited.headers = {"Retry-After": "0.25"}
+        get.return_value = limited
+        with self.assertRaises(BitunixMarketDataError) as caught:
+            service().get_price()
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(get.call_count, 1)
+
+    @patch("services.bitunix_market_service.requests.get")
+    def test_429_respects_retry_after_then_retries(self, get):
+        limited = Mock()
+        limited.status_code = 429
+        limited.headers = {"Retry-After": "0.25"}
         ok = Mock()
         ok.status_code = 200
         ok.json.return_value = {"code": 0, "data": [{"symbol": "SOLUSDT", "lastPrice": "10"}]}
-        for status in (418, 429):
-            limited = Mock()
-            limited.status_code = status
-            limited.headers = {"Retry-After": "0.25"}
-            get.side_effect = [limited, ok]
-            market = service()
-            self.assertEqual(market.get_price(), 10.0)
-            self.assertEqual(get.call_count, 2)
-            get.reset_mock()
-
-        limited = Mock()
-        limited.status_code = 418
-        limited.headers = {}
-        get.side_effect = [limited, limited, limited]
+        get.side_effect = [limited, ok]
         market = service()
+        self.assertEqual(market.get_price(), 10.0)
+        self.assertEqual(get.call_count, 2)
+
+    @patch("services.bitunix_market_service.requests.get")
+    def test_429_retry_after_above_cap_returns_503_without_retry(self, get):
+        limited = Mock()
+        limited.status_code = 429
+        limited.headers = {"Retry-After": "30"}
+        get.return_value = limited
         with self.assertRaises(BitunixMarketDataError) as caught:
-            market.get_price()
+            service().get_price()
         self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(get.call_count, 1)
+
+    @patch("services.bitunix_market_service.requests.get")
+    def test_429_without_retry_after_uses_bounded_fallback_and_retries(self, get):
+        limited = Mock()
+        limited.status_code = 429
+        limited.headers = {}
+        ok = Mock()
+        ok.status_code = 200
+        ok.json.return_value = {"code": 0, "data": [{"symbol": "SOLUSDT", "lastPrice": "10"}]}
+        get.side_effect = [limited, ok]
+        market = service()
+        self.assertEqual(market.get_price(), 10.0)
+        self.assertEqual(get.call_count, 2)
 
     @patch("services.bitunix_market_service.requests.get")
     def test_nonzero_api_code_is_error(self, get):
