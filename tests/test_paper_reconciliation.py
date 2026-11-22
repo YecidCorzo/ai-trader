@@ -45,9 +45,9 @@ class PaperReconciliationFiniteAmountTests(unittest.TestCase):
         self.add_trade_and_event()
         result = reconcile_realized_pnl(self.connection, "account-1")
         self.assertTrue(result["consistent"])
-        self.assertEqual(result["difference"], "0")
-        self.assertEqual(result["trade_realized_pnl"], "1.25")
-        self.assertEqual(result["event_realized_pnl"], "1.25")
+        self.assertEqual(result["difference"], Decimal("0"))
+        self.assertEqual(result["trade_realized_pnl"], Decimal("1.25"))
+        self.assertEqual(result["event_realized_pnl"], Decimal("1.25"))
 
     def test_duplicate_event_reference_is_reported(self):
         self.add_trade_and_event()
