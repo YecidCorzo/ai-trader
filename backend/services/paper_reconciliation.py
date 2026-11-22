@@ -1,35 +1,70 @@
-"""Exact reconciliation for the immutable PAPER realized-P&L ledger."""
+"""Exact one-to-one reconciliation for the immutable PAPER realized-P&L ledger."""
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
 
 def reconcile_realized_pnl(connection: sqlite3.Connection, account_id: str) -> dict:
-    """Compare CLOSED trade P&L with its one-to-one account ledger postings.
+    """Compare every CLOSED trade with exactly one matching account P&L posting.
 
-    Decimal parsing is exact. Malformed persisted values fail closed instead
-    of being reported as a consistent ledger.
+    Both aggregate totals and per-trade reference/amount matching are checked.
+    This prevents offsetting posting errors from cancelling in the aggregate.
+    Malformed persisted values fail closed instead of being reported as a
+    consistent ledger.
     """
     trades = connection.execute(
-        """SELECT realized_pnl FROM paper_trades
+        """SELECT id, realized_pnl FROM paper_trades
            WHERE paper_account_id = ? AND status = 'CLOSED'
            ORDER BY id""",
         (account_id,),
     ).fetchall()
     events = connection.execute(
-        """SELECT amount FROM paper_account_events
+        """SELECT reference_id, amount FROM paper_account_events
            WHERE account_id = ? AND event_type = 'TRADE_REALIZED_PNL'
            ORDER BY sequence""",
         (account_id,),
     ).fetchall()
     try:
-        trade_total = sum((Decimal(row["realized_pnl"]) for row in trades), Decimal("0"))
+        trade_amounts = {
+            str(row["id"]): Decimal(row["realized_pnl"])
+            for row in trades
+        }
+        event_amounts: dict[str, list[Decimal]] = defaultdict(list)
+        for row in events:
+            if row["reference_id"] is not None:
+                event_amounts[str(row["reference_id"])].append(Decimal(row["amount"]))
+            else:
+                event_amounts[""].append(Decimal(row["amount"]))
+        trade_total = sum(trade_amounts.values(), Decimal("0"))
         event_total = sum((Decimal(row["amount"]) for row in events), Decimal("0"))
     except (InvalidOperation, TypeError, ValueError):
         raise ValueError("PAPER realized-P&L ledger contains a malformed decimal") from None
 
+    trade_ids = set(trade_amounts)
+    event_ids = set(event_amounts)
+    missing_event_trade_ids = sorted(trade_ids - event_ids)
+    orphan_event_trade_ids = sorted(event_ids - trade_ids)
+    duplicate_event_trade_ids = sorted(
+        trade_id for trade_id, postings in event_amounts.items()
+        if trade_id and len(postings) != 1
+    )
+    mismatched_trade_ids = sorted(
+        trade_id for trade_id in trade_ids & event_ids
+        if len(event_amounts[trade_id]) == 1
+        and event_amounts[trade_id][0] != trade_amounts[trade_id]
+    )
     difference = trade_total - event_total
+    consistent = (
+        difference == 0
+        and len(trades) == len(events)
+        and not missing_event_trade_ids
+        and not orphan_event_trade_ids
+        and not duplicate_event_trade_ids
+        and not mismatched_trade_ids
+        and "" not in event_amounts
+    )
     return {
         "account_id": account_id,
         "closed_trade_count": len(trades),
@@ -37,5 +72,9 @@ def reconcile_realized_pnl(connection: sqlite3.Connection, account_id: str) -> d
         "trade_realized_pnl": trade_total,
         "event_realized_pnl": event_total,
         "difference": difference,
-        "consistent": difference == 0 and len(trades) == len(events),
+        "missing_event_trade_ids": missing_event_trade_ids,
+        "orphan_event_trade_ids": orphan_event_trade_ids,
+        "duplicate_event_trade_ids": duplicate_event_trade_ids,
+        "mismatched_trade_ids": mismatched_trade_ids,
+        "consistent": consistent,
     }
