@@ -387,9 +387,14 @@ def reconcile_paper_account(
     """Explicitly reconcile realized P&L; halt new PAPER entries on mismatch."""
     try:
         _authorization(connection).require_account(principal, account_id)
+        reconciliation = execution.reconcile_account(account_id, principal=principal)
+        # Preserve exact Decimal precision across FastAPI's JSON encoder.
+        for field in ("trade_realized_pnl", "event_realized_pnl", "difference"):
+            if field in reconciliation:
+                reconciliation[field] = str(reconciliation[field])
         return {
             "mode": "paper",
-            "reconciliation": execution.reconcile_account(account_id, principal=principal),
+            "reconciliation": reconciliation,
             "live_trading_authorized": False,
         }
     except Exception as error:
