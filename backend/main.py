@@ -543,8 +543,12 @@ from services.bitunix_market_service import (
     BitunixMarketDataError,
     BitunixMarketService,
 )
+from services.market_price_comparison import MarketPriceComparisonService
 
 bitunix_market_service = BitunixMarketService("SOLUSDT")
+shadow_market_comparison = MarketPriceComparisonService(
+    market_service, bitunix_market_service,
+)
 
 
 def _bitunix_market_data_http_error(error):
@@ -578,6 +582,12 @@ def get_bitunix_price():
         "data_type": "real_market_data",
         "mode": "paper",
     }
+
+
+@app.get("/api/market-data/shadow-comparison")
+def get_shadow_market_comparison():
+    """Compare Binance Spot and Bitunix Futures without changing strategy inputs."""
+    return shadow_market_comparison.compare()
 
 
 @app.get("/api/bitunix/candles")

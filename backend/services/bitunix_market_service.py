@@ -10,6 +10,7 @@ import logging
 import math
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 import requests
@@ -170,9 +171,24 @@ class BitunixMarketService:
             )
         return ticker
 
+    def get_price_snapshot(self) -> dict:
+        """Return LAST_PRICE with the local time the cached ticker was fetched."""
+        ticker = self._get_ticker()
+        price = self._positive_finite(ticker.get("lastPrice"), "last traded price")
+        cache_key = ("tickers", tuple(sorted({"symbols": self.symbol}.items())))
+        with self._request_lock:
+            cached = self._cache.get(cache_key)
+        age_seconds = (
+            max(0.0, self._monotonic() - cached[0])
+            if cached is not None
+            else 0.0
+        )
+        retrieved_at = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+        return {"price": price, "retrieved_at": retrieved_at}
+
     def get_price(self) -> float:
         """Return last traded price; this is not the mark price."""
-        return self._positive_finite(self._get_ticker().get("lastPrice"), "last traded price")
+        return self.get_price_snapshot()["price"]
 
     def get_mark_price(self) -> float:
         """Return provider mark price; not yet wired into PAPER risk or stops."""

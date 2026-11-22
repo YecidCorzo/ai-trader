@@ -273,5 +273,32 @@ class BitunixMarketServiceTests(unittest.TestCase):
             service().get_candles("5m", 0)
 
 
+    @patch("services.bitunix_market_service.requests.get")
+    def test_price_snapshot_preserves_original_cached_retrieval_time(self, get):
+        response = Mock()
+        response.status_code = 200
+        response.headers = {}
+        response.json.return_value = {
+            "code": 0,
+            "data": [{"symbol": "SOLUSDT", "lastPrice": "150.25"}],
+        }
+        get.return_value = response
+        clock = [10.0]
+        market = BitunixMarketService(
+            "SOLUSDT", monotonic=lambda: clock[0], sleep=lambda _: None
+        )
+        first = market.get_price_snapshot()
+        clock[0] = 12.0
+        second = market.get_price_snapshot()
+        self.assertEqual(first["price"], 150.25)
+        self.assertEqual(second["price"], 150.25)
+        self.assertAlmostEqual(
+            (first["retrieved_at"] - second["retrieved_at"]).total_seconds(),
+            2.0,
+            delta=0.05,
+        )
+        self.assertEqual(get.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
