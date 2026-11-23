@@ -75,8 +75,9 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
         )
         self.assertTrue(result["complete"])
         self.assertEqual(result["returned"], 301)
-        self.assertEqual(result["candles"][0][0], BASE_TIME)
-        self.assertEqual(result["candles"][-1][0], BASE_TIME + 300 * HOUR)
+        self.assertEqual(result["candles"][0][0], BASE_TIME + HOUR)
+        self.assertEqual(result["candles"][-1][0], BASE_TIME + 301 * HOUR)
+        self.assertEqual(result["synthetic_count"], 1)
         self.assertEqual(get.call_count, 3)
         self.assertEqual(get.call_args_list[1].kwargs["params"]["granularity"], 3600)
 
