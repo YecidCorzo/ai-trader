@@ -177,6 +177,12 @@ added by merged PRs #122–#125:
   boundary returns HTTP 503 when the configured JWKS provider cannot be
   reached; malformed tokens and unknown signing keys remain HTTP 401.
 
+- A hermetic key-rotation regression uses two ephemeral RSA keys and a
+  mocked JWKS key-set refresh: a token signed by a newly published `kid` is
+  accepted after the unknown-key refresh. This verifies the local refresh path,
+  not a real provider's rotation timing, overlap, TLS delivery or outage
+  recovery; those remain provider-backed release gates.
+
 These tests are hermetic. Separately, the recorded Keycloak smoke test above
 proves one successful PKCE token exchange and authenticated API request. The
 combined evidence still does not prove provider discovery, production-grade

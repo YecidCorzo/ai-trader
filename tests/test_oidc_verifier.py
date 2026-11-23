@@ -248,6 +248,60 @@ class OIDCVerifierTests(unittest.TestCase):
             with self.assertRaises(OIDCProviderUnavailable):
                 client.fetch_data()
 
+    def test_rotated_signing_key_is_accepted_after_unknown_kid_refresh(self):
+        rotated_private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+        )
+
+        class SigningKey:
+            def __init__(self, key_id, key):
+                self.key_id = key_id
+                self.key = key
+
+        old_key = SigningKey("old-key", self.public_key)
+        rotated_key = SigningKey("rotated-key", rotated_private_key.public_key())
+        client = ResilientPyJWKClient(
+            "https://identity.example.test/.well-known/jwks.json",
+            cache_jwk_set=False,
+            timeout=1,
+        )
+        verifier = OIDCJWTVerifier(
+            issuer="https://identity.example.test/",
+            audience="ai-trader-paper",
+            jwks_url="https://identity.example.test/.well-known/jwks.json",
+            jwks_client=client,
+        )
+        now = int(time.time())
+        rotated_token = jwt.encode(
+            {
+                "iss": "https://identity.example.test/",
+                "aud": "ai-trader-paper",
+                "sub": "user-after-key-rotation",
+                "iat": now,
+                "exp": now + 300,
+            },
+            rotated_private_key,
+            algorithm="RS256",
+            headers={"kid": "rotated-key"},
+        )
+
+        with patch.object(
+            client,
+            "get_signing_keys",
+            side_effect=[[old_key], [old_key, rotated_key]],
+        ) as get_signing_keys:
+            principal = verifier.verify(rotated_token)
+
+        self.assertEqual(principal.issuer, "https://identity.example.test/")
+        self.assertEqual(principal.subject, "user-after-key-rotation")
+        self.assertEqual(get_signing_keys.call_count, 2)
+        self.assertEqual(get_signing_keys.call_args_list[0].kwargs, {})
+        self.assertEqual(
+            get_signing_keys.call_args_list[1].kwargs,
+            {"refresh": True},
+        )
+
     def test_last_good_jwks_survives_failed_refresh(self):
         client = ResilientPyJWKClient(
             "https://identity.example.test/jwks",
