@@ -189,5 +189,11 @@ class CoinbaseMarketRoutesTests(unittest.TestCase):
         self.assertEqual(payload["candles"][1]["volume"], 0.0)
 
 
+    def test_four_hour_endpoint_rejects_limits_above_250_before_provider_call(self):
+        response = self.client.get("/api/coinbase/candles?interval=4h&limit=251")
+        self.assertEqual(response.status_code, 422)
+        self.assertIsNone(self.fake.last_candle_call)
+
+
 if __name__ == "__main__":
     unittest.main()
