@@ -62,6 +62,11 @@ def get_coinbase_candles(
     limit: int = Query(100, ge=1, le=1000),
 ):
     """Return normalized closed Coinbase candles and explicit completeness metadata."""
+    if interval == "4h" and limit > CoinbaseMarketService.MAX_4H_CANDLE_LIMIT:
+        raise HTTPException(
+            status_code=422,
+            detail=f"El límite máximo para velas 4h es {CoinbaseMarketService.MAX_4H_CANDLE_LIMIT}",
+        )
     service = coinbase_market_services[product_id]
     try:
         result = service.get_candles(
