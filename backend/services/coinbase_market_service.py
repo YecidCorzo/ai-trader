@@ -509,11 +509,11 @@ class CoinbaseMarketService:
             hourly_interval_ms = 3_600_000
             four_hour_ms = self.FOUR_HOURS_SECONDS * 1000
             now_ms = int(self.clock_ms())
-            latest_hour = (
-                (now_ms // hourly_interval_ms) * hourly_interval_ms - hourly_interval_ms
-                if closed_only else (now_ms // hourly_interval_ms) * hourly_interval_ms
+            latest_bucket = (
+                (now_ms // four_hour_ms) * four_hour_ms - four_hour_ms
+                if closed_only else (now_ms // four_hour_ms) * four_hour_ms
             )
-            latest_bucket = (latest_hour // four_hour_ms) * four_hour_ms
+            latest_hour = latest_bucket + 3 * hourly_interval_ms
             start_bucket = latest_bucket - (limit - 1) * four_hour_ms
             raw_limit = limit * 4 + (4 if closed_only else 0)
             hourly_fetched = self._fetch_normalized_candles(
