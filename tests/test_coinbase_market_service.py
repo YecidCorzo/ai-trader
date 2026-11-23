@@ -109,6 +109,7 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
             response(products_payload()),
             response(hourly),
             response([]),
+            response({"time": "2023-12-31T23:00:00Z"}),
         ]
         with self.assertRaises(CoinbaseMarketDataError):
             market(now_ms=BASE_TIME + 4 * HOUR).get_candles("4h", 1)
@@ -147,10 +148,11 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
                 raw_candle(BASE_TIME + 2 * HOUR),
             ]),
         ]
-        with self.assertRaises(CoinbaseMarketDataError):
-            market(now_ms=BASE_TIME + 3 * HOUR).get_candles(
-                "1h", 2, closed_only=False
-            )
+        result = market(now_ms=BASE_TIME + 3 * HOUR).get_candles(
+            "1h", 2, closed_only=False, include_metadata=True
+        )
+        self.assertEqual(result["synthetic_count"], 1)
+        self.assertEqual(result["candles"][-1][5], 0.0)
 
     @patch("services.coinbase_market_service.requests.get")
     def test_stale_closed_candle_returns_503(self, get):
@@ -158,6 +160,7 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
             response(products_payload()),
             response([raw_candle(BASE_TIME)]),
             response([]),
+            response({"time": "2024-01-01T01:00:00Z"}),
         ]
         with self.assertRaises(CoinbaseMarketDataError) as caught:
             market(now_ms=BASE_TIME + 3 * HOUR).get_candles("1h", 1)
