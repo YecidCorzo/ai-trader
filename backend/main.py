@@ -28,6 +28,10 @@ try:
     from backend.api.paper_routes import router as paper_router
 except ImportError:
     from api.paper_routes import router as paper_router
+try:
+    from backend.api.coinbase_routes import router as coinbase_router
+except ImportError:
+    from api.coinbase_routes import router as coinbase_router
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,7 @@ def _internal_server_error(operation):
 
 app = FastAPI(title="AI Trader API")
 app.include_router(paper_router)
+app.include_router(coinbase_router)
 market_service = MarketService("SOLUSDT")
 strategy = EmaRsiStrategy()
 cors_origins = [
