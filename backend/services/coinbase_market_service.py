@@ -41,7 +41,9 @@ class CoinbaseMarketService:
     }
     FOUR_HOURS_SECONDS = 14_400
     MAX_CANDLE_LIMIT = 1000
-    MAX_RAW_4H_CANDLES = MAX_CANDLE_LIMIT * 4 + 4
+    MAX_4H_CANDLE_LIMIT = 250
+    MAX_RAW_4H_CANDLES = MAX_4H_CANDLE_LIMIT * 4 + 4
+    MAX_CONSECUTIVE_SYNTHETIC = 6
     PAGE_SIZE = 300
     CACHE_TTL_SECONDS = 5.0
     CACHE_MAX_ENTRIES = 128
@@ -56,12 +58,16 @@ class CoinbaseMarketService:
         clock_ms: Callable[[], int] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        max_consecutive_synthetic: int = MAX_CONSECUTIVE_SYNTHETIC,
     ):
         normalized_product = str(product_id).upper()
         if normalized_product not in self.ALLOWED_PRODUCTS:
             raise ValueError("Coinbase product is not enabled for this adapter")
         self.product_id = normalized_product
         self.timeout = timeout
+        if int(max_consecutive_synthetic) < 1:
+            raise ValueError("max_consecutive_synthetic must be at least 1")
+        self.max_consecutive_synthetic = int(max_consecutive_synthetic)
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
         self._monotonic = monotonic
         self._sleep = sleep
@@ -317,15 +323,109 @@ class CoinbaseMarketService:
                 if end_seconds <= 0:
                     break
 
+        # Sparse trading is valid at the provider level. Do not validate gaps
+        # across the whole fetched page: continuity is checked only after the
+        # exact requested output window has been built.
         candles.sort(key=lambda row: row[0])
+        return candles
+
+    def _verify_latest_synthetic_with_ticker(self, candle_start_ms: int) -> None:
+        """A synthetic final candle is valid only when ticker confirms no trade in it.
+
+        Coinbase candle endpoints omit no-trade intervals. If the ticker's last
+        trade timestamp falls inside the synthetic interval, the omission is
+        inconsistent and the series fails closed with 503.
+        """
+        payload, _ = self._request_json(f"/products/{self.product_id}/ticker")
+        if not isinstance(payload, dict):
+            raise CoinbaseMarketDataError(
+                "Coinbase ticker cannot validate the latest synthetic candle",
+                status_code=503,
+            )
+        try:
+            ticker_time = datetime.fromisoformat(
+                str(payload.get("time", "")).replace("Z", "+00:00")
+            )
+            if ticker_time.tzinfo is None:
+                raise ValueError("ticker timestamp must be timezone-aware")
+            ticker_ms = int(ticker_time.timestamp() * 1000)
+        except (TypeError, ValueError, OverflowError):
+            raise CoinbaseMarketDataError(
+                "Coinbase ticker timestamp is unavailable for synthetic-candle validation",
+                status_code=503,
+            ) from None
+        if ticker_ms >= candle_start_ms:
+            raise CoinbaseMarketDataError(
+                "Coinbase ticker shows activity in the latest synthetic candle",
+                status_code=503,
+            )
+
+    def _fill_missing_candles(
+        self,
+        candles: list[list[float | int]],
+        *,
+        start_ms: int,
+        end_ms: int,
+        interval_ms: int,
+        verify_latest: bool,
+    ) -> tuple[list[list[float | int]], set[int]]:
+        """Fill only the requested output window, carrying forward prior close."""
+        real_by_time = {
+            int(row[0]): row for row in candles
+            if start_ms <= int(row[0]) <= end_ms
+        }
+        prior_rows = [
+            row for row in candles if int(row[0]) < start_ms
+        ]
+        previous_close = float(max(prior_rows, key=lambda row: row[0])[4]) if prior_rows else None
+        output: list[list[float | int]] = []
+        synthetic: set[int] = set()
+        consecutive = 0
+        real_count = 0
+
+        for timestamp in range(start_ms, end_ms + 1, interval_ms):
+            row = real_by_time.get(timestamp)
+            if row is not None:
+                output.append(row)
+                previous_close = float(row[4])
+                consecutive = 0
+                real_count += 1
+                continue
+            if previous_close is None:
+                # No prior close exists yet; do not invent leading history.
+                continue
+            consecutive += 1
+            if consecutive > self.max_consecutive_synthetic:
+                raise CoinbaseMarketDataError(
+                    "Coinbase candle history exceeds the consecutive synthetic-candle limit",
+                    status_code=503,
+                )
+            synthetic.add(timestamp)
+            output.append([
+                timestamp, previous_close, previous_close,
+                previous_close, previous_close, 0.0,
+            ])
+
+        if real_count == 0:
+            raise CoinbaseMarketDataError(
+                "Coinbase returned no real candles in the requested interval",
+                status_code=503,
+            )
+        if not output:
+            raise CoinbaseMarketDataError(
+                "Coinbase returned no usable candles in the requested interval",
+                status_code=503,
+            )
         if any(
-            candles[index + 1][0] - candles[index][0] != interval_ms
-            for index in range(len(candles) - 1)
+            int(output[index + 1][0]) - int(output[index][0]) != interval_ms
+            for index in range(len(output) - 1)
         ):
             raise CoinbaseMarketDataError(
-                "Coinbase candle series has a gap or interval mismatch", status_code=502
+                "Coinbase returned an incomplete candle window", status_code=503
             )
-        return candles[-target_count:]
+        if verify_latest and int(output[-1][0]) in synthetic:
+            self._verify_latest_synthetic_with_ticker(int(output[-1][0]))
+        return output, synthetic
 
     def _get_native_candles(
         self,
@@ -333,26 +433,26 @@ class CoinbaseMarketService:
         limit: int,
         *,
         closed_only: bool,
-    ) -> list[list[float | int]]:
+    ) -> tuple[list[list[float | int]], set[int]]:
         granularity = self.GRANULARITY_SECONDS[interval]
         target_count = limit + (1 if closed_only else 0)
-        candles = self._fetch_normalized_candles(
+        fetched = self._fetch_normalized_candles(
             granularity, target_count, max_count=self.MAX_CANDLE_LIMIT + 1
         )
         interval_ms = granularity * 1000
         now_ms = int(self.clock_ms())
-        if closed_only:
-            candles = [
-                row for row in candles
-                if int(row[0]) + interval_ms <= now_ms
-            ]
-            expected_latest = (now_ms // interval_ms) * interval_ms - interval_ms
-            if not candles or int(candles[-1][0]) != expected_latest:
-                raise CoinbaseMarketDataError(
-                    "Coinbase returned stale or incomplete closed candles",
-                    status_code=503,
-                )
-        return candles[-limit:]
+        expected_latest = (
+            (now_ms // interval_ms) * interval_ms - interval_ms
+            if closed_only else (now_ms // interval_ms) * interval_ms
+        )
+        start_ms = expected_latest - (limit - 1) * interval_ms
+        return self._fill_missing_candles(
+            fetched,
+            start_ms=start_ms,
+            end_ms=expected_latest,
+            interval_ms=interval_ms,
+            verify_latest=closed_only,
+        )
 
     @classmethod
     def _aggregate_four_hour(
@@ -398,48 +498,49 @@ class CoinbaseMarketService:
             limit = int(limit)
         except (TypeError, ValueError, OverflowError):
             raise ValueError("Candle limit must be an integer") from None
-        if limit < 1 or limit > self.MAX_CANDLE_LIMIT:
-            raise ValueError(
-                f"Candle limit must be between 1 and {self.MAX_CANDLE_LIMIT}"
-            )
+        max_limit = self.MAX_4H_CANDLE_LIMIT if interval == "4h" else self.MAX_CANDLE_LIMIT
+        if limit < 1 or limit > max_limit:
+            raise ValueError(f"Candle limit must be between 1 and {max_limit} for {interval}")
 
         self._ensure_product_active()
         if interval == "4h":
-            # Four hourly candles are required for every emitted 4h candle.
-            raw_limit = min(
-                self.MAX_RAW_4H_CANDLES,
-                limit * 4 + (4 if closed_only else 0),
+            # Cap at 250 output bars (<=1004 hourly rows), avoiding ~17 page
+            # requests for a 1000-bar request while retaining closed-hour checks.
+            hourly_interval_ms = 3_600_000
+            four_hour_ms = self.FOUR_HOURS_SECONDS * 1000
+            now_ms = int(self.clock_ms())
+            latest_bucket = (
+                (now_ms // four_hour_ms) * four_hour_ms - four_hour_ms
+                if closed_only else (now_ms // four_hour_ms) * four_hour_ms
             )
-            hourly = self._fetch_normalized_candles(
+            latest_hour = latest_bucket + 3 * hourly_interval_ms
+            start_bucket = latest_bucket - (limit - 1) * four_hour_ms
+            raw_limit = limit * 4 + (4 if closed_only else 0)
+            hourly_fetched = self._fetch_normalized_candles(
                 3600, raw_limit, max_count=self.MAX_RAW_4H_CANDLES
             )
-            hourly_interval_ms = 3_600_000
-            now_ms = int(self.clock_ms())
-            if closed_only:
-                hourly = [
-                    row for row in hourly
-                    if int(row[0]) + hourly_interval_ms <= now_ms
-                ]
-                expected_hour = (now_ms // hourly_interval_ms) * hourly_interval_ms - hourly_interval_ms
-                if not hourly or int(hourly[-1][0]) != expected_hour:
-                    raise CoinbaseMarketDataError(
-                        "Coinbase returned stale or incomplete hourly candles",
-                        status_code=503,
-                    )
+            hourly, hourly_synthetic = self._fill_missing_candles(
+                hourly_fetched,
+                start_ms=start_bucket,
+                end_ms=latest_hour,
+                interval_ms=hourly_interval_ms,
+                verify_latest=False,
+            )
             candles = self._aggregate_four_hour(hourly, now_ms=now_ms)[-limit:]
-            if closed_only:
-                expected_latest = (
-                    (now_ms // (self.FOUR_HOURS_SECONDS * 1000))
-                    * (self.FOUR_HOURS_SECONDS * 1000)
-                    - self.FOUR_HOURS_SECONDS * 1000
+            synthetic_timestamps = set()
+            for row in candles:
+                bucket = int(row[0])
+                if any(bucket + offset * hourly_interval_ms in hourly_synthetic for offset in range(4)):
+                    synthetic_timestamps.add(bucket)
+            if not candles or int(candles[-1][0]) != latest_bucket:
+                raise CoinbaseMarketDataError(
+                    "Coinbase could not build the latest complete 4h candle",
+                    status_code=503,
                 )
-                if not candles or int(candles[-1][0]) != expected_latest:
-                    raise CoinbaseMarketDataError(
-                        "Coinbase could not build the latest complete 4h candle",
-                        status_code=503,
-                    )
+            if closed_only and int(candles[-1][0]) in synthetic_timestamps:
+                self._verify_latest_synthetic_with_ticker(int(candles[-1][0]))
         else:
-            candles = self._get_native_candles(
+            candles, synthetic_timestamps = self._get_native_candles(
                 interval, limit, closed_only=closed_only
             )
 
@@ -453,6 +554,8 @@ class CoinbaseMarketService:
             "returned": len(candles),
             "interval": interval,
             "closed_only": closed_only,
+            "synthetic_count": len(synthetic_timestamps),
+            "synthetic_timestamps": sorted(synthetic_timestamps),
         }
         if include_metadata:
             return metadata
