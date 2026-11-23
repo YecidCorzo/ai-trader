@@ -11,6 +11,7 @@ import math
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Callable
 
 import requests
@@ -44,6 +45,7 @@ class BitunixMarketService:
     CACHE_TTL_SECONDS = 5.0
     MIN_REQUEST_INTERVAL_SECONDS = 0.15
     MAX_RATE_LIMIT_RETRIES = 2
+    MAX_RETRY_AFTER_SECONDS = 2.0
 
     def __init__(
         self,
@@ -62,6 +64,25 @@ class BitunixMarketService:
         self._cache: dict[tuple, tuple[float, object]] = {}
         self._request_lock = threading.Lock()
         self._last_request_at = 0.0
+
+    @staticmethod
+    def _parse_retry_after_seconds(value: object) -> float | None:
+        """Parse Retry-After as delta-seconds or an HTTP date."""
+        if value is None:
+            return None
+        try:
+            seconds = float(value)
+            if math.isfinite(seconds) and seconds >= 0:
+                return seconds
+        except (TypeError, ValueError, OverflowError):
+            pass
+        try:
+            retry_at = parsedate_to_datetime(str(value))
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
 
     def _request_data(self, endpoint: str, params: dict) -> object:
         cache_key = (endpoint, tuple(sorted(params.items())))
@@ -85,21 +106,41 @@ class BitunixMarketService:
                         timeout=self.timeout,
                     )
                     status = getattr(response, "status_code", None)
-                    if status in (418, 429):
+                    if status == 418:
+                        logger.warning("Bitunix returned HTTP 418; not retrying")
+                        raise BitunixMarketDataError(
+                            "Bitunix temporary ban; retry later",
+                            status_code=503,
+                        )
+                    if status == 429:
                         retry_after = getattr(response, "headers", {}).get("Retry-After")
-                        try:
-                            retry_seconds = float(retry_after)
-                        except (TypeError, ValueError):
-                            retry_seconds = 0.5 * (2 ** attempt)
+                        retry_seconds = self._parse_retry_after_seconds(retry_after)
+                        if (
+                            retry_seconds is not None
+                            and retry_seconds > self.MAX_RETRY_AFTER_SECONDS
+                        ):
+                            logger.warning(
+                                "Bitunix Retry-After %.3fs exceeds retry cap %.3fs; not retrying",
+                                retry_seconds, self.MAX_RETRY_AFTER_SECONDS,
+                            )
+                            raise BitunixMarketDataError(
+                                "Bitunix rate limit requires a longer wait; retry later",
+                                status_code=503,
+                            )
                         logger.warning(
-                            "Bitunix rate limit response HTTP %s; retry %s/%s",
-                            status, attempt + 1, self.MAX_RATE_LIMIT_RETRIES,
+                            "Bitunix rate limit response HTTP 429; retry %s/%s",
+                            attempt + 1, self.MAX_RATE_LIMIT_RETRIES,
                         )
                         if attempt < self.MAX_RATE_LIMIT_RETRIES:
-                            self._sleep(min(max(retry_seconds, 0.25), 2.0))
+                            delay = (
+                                retry_seconds
+                                if retry_seconds is not None
+                                else min(0.5 * (2 ** attempt), self.MAX_RETRY_AFTER_SECONDS)
+                            )
+                            self._sleep(delay)
                             continue
                         raise BitunixMarketDataError(
-                            "Bitunix rate limit or temporary ban; retry later",
+                            "Bitunix rate limit; retry later",
                             status_code=503,
                         )
 
