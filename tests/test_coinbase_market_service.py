@@ -332,5 +332,16 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
             CoinbaseMarketService("SOL-USD")
 
 
+    @patch("services.coinbase_market_service.requests.get")
+    def test_sol_usdc_is_verified_against_public_products_catalog(self, get):
+        get.return_value = response(products_payload("SOL-USDC"))
+        service = market(product_id="SOL-USDC")
+        product = service._ensure_product_active()
+        self.assertEqual(product["id"], "SOL-USDC")
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(get.call_args.kwargs["url"] if "url" in get.call_args.kwargs else get.call_args.args[0],
+                         f"{service.BASE_URL}/products")
+
+
 if __name__ == "__main__":
     unittest.main()
