@@ -109,6 +109,7 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
             response(products_payload()),
             response(hourly),
             response([]),
+            response({"time": "2024-01-01T03:30:00Z"}),
         ]
         with self.assertRaises(CoinbaseMarketDataError):
             market(now_ms=BASE_TIME + 4 * HOUR).get_candles("4h", 1)
@@ -147,10 +148,11 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
                 raw_candle(BASE_TIME + 2 * HOUR),
             ]),
         ]
-        with self.assertRaises(CoinbaseMarketDataError):
-            market(now_ms=BASE_TIME + 3 * HOUR).get_candles(
-                "1h", 2, closed_only=False
-            )
+        result = market(now_ms=BASE_TIME + 3 * HOUR).get_candles(
+            "1h", 2, closed_only=False, include_metadata=True
+        )
+        self.assertEqual(result["synthetic_count"], 1)
+        self.assertEqual(result["candles"][-1][5], 0.0)
 
     @patch("services.coinbase_market_service.requests.get")
     def test_stale_closed_candle_returns_503(self, get):
@@ -158,6 +160,7 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
             response(products_payload()),
             response([raw_candle(BASE_TIME)]),
             response([]),
+            response({"time": "2024-01-01T02:30:00Z"}),
         ]
         with self.assertRaises(CoinbaseMarketDataError) as caught:
             market(now_ms=BASE_TIME + 3 * HOUR).get_candles("1h", 1)
@@ -212,6 +215,120 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
                 ]
                 with self.assertRaises(CoinbaseMarketDataError):
                     market().get_candles("1h", 1)
+
+
+    def test_missing_interval_is_filled_with_previous_close_and_zero_volume(self):
+        service = market(now_ms=BASE_TIME + 4 * HOUR)
+        rows, synthetic = service._fill_missing_candles(
+            [
+                [BASE_TIME, 10.0, 12.0, 9.0, 11.0, 25.0],
+                [BASE_TIME + 2 * HOUR, 12.0, 14.0, 11.0, 13.0, 30.0],
+            ],
+            start_ms=BASE_TIME,
+            end_ms=BASE_TIME + 2 * HOUR,
+            interval_ms=HOUR,
+            verify_latest=False,
+        )
+        self.assertEqual(rows[1], [
+            BASE_TIME + HOUR, 11.0, 11.0, 11.0, 11.0, 0.0
+        ])
+        self.assertEqual(synthetic, {BASE_TIME + HOUR})
+
+    def test_continuity_is_checked_only_inside_requested_window(self):
+        service = market()
+        rows, synthetic = service._fill_missing_candles(
+            [
+                [BASE_TIME, 10.0, 12.0, 9.0, 11.0, 25.0],
+                [BASE_TIME + 2 * HOUR, 12.0, 14.0, 11.0, 13.0, 30.0],
+                [BASE_TIME + 3 * HOUR, 13.0, 14.0, 12.0, 13.5, 20.0],
+                [BASE_TIME + 4 * HOUR, 13.5, 15.0, 13.0, 14.0, 22.0],
+            ],
+            start_ms=BASE_TIME + 2 * HOUR,
+            end_ms=BASE_TIME + 4 * HOUR,
+            interval_ms=HOUR,
+            verify_latest=False,
+        )
+        self.assertEqual([row[0] for row in rows], [
+            BASE_TIME + 2 * HOUR, BASE_TIME + 3 * HOUR, BASE_TIME + 4 * HOUR
+        ])
+        self.assertEqual(synthetic, set())
+
+    def test_more_than_configured_consecutive_synthetic_candles_returns_503(self):
+        service = CoinbaseMarketService(
+            "SOL-EUR", clock_ms=lambda: BASE_TIME, monotonic=lambda: 10.0,
+            sleep=lambda _: None, max_consecutive_synthetic=2,
+        )
+        with self.assertRaises(CoinbaseMarketDataError) as caught:
+            service._fill_missing_candles(
+                [[BASE_TIME, 10.0, 12.0, 9.0, 11.0, 25.0]],
+                start_ms=BASE_TIME,
+                end_ms=BASE_TIME + 3 * HOUR,
+                interval_ms=HOUR,
+                verify_latest=False,
+            )
+        self.assertEqual(caught.exception.status_code, 503)
+
+    def test_no_real_candle_in_requested_window_returns_503(self):
+        service = market()
+        with self.assertRaises(CoinbaseMarketDataError) as caught:
+            service._fill_missing_candles(
+                [[BASE_TIME, 10.0, 12.0, 9.0, 11.0, 25.0]],
+                start_ms=BASE_TIME + HOUR,
+                end_ms=BASE_TIME + 2 * HOUR,
+                interval_ms=HOUR,
+                verify_latest=False,
+            )
+        self.assertEqual(caught.exception.status_code, 503)
+
+    def test_latest_synthetic_candle_requires_ticker_to_confirm_no_trade(self):
+        service = market()
+        with patch.object(service, "_request_json", return_value=(
+            {"time": "2024-01-01T00:30:00Z"}, None
+        )) as ticker:
+            rows, synthetic = service._fill_missing_candles(
+                [[BASE_TIME, 10.0, 12.0, 9.0, 11.0, 25.0]],
+                start_ms=BASE_TIME,
+                end_ms=BASE_TIME + HOUR,
+                interval_ms=HOUR,
+                verify_latest=True,
+            )
+        self.assertEqual(synthetic, {BASE_TIME + HOUR})
+        ticker.assert_called_once_with("/products/SOL-EUR/ticker")
+        self.assertEqual(rows[-1][5], 0.0)
+
+    def test_latest_synthetic_candle_fails_if_ticker_reports_trade_inside_it(self):
+        service = market()
+        with patch.object(service, "_request_json", return_value=(
+            {"time": "2024-01-01T01:30:00Z"}, None
+        )):
+            with self.assertRaises(CoinbaseMarketDataError) as caught:
+                service._fill_missing_candles(
+                    [[BASE_TIME, 10.0, 12.0, 9.0, 11.0, 25.0]],
+                    start_ms=BASE_TIME,
+                    end_ms=BASE_TIME + HOUR,
+                    interval_ms=HOUR,
+                    verify_latest=True,
+                )
+        self.assertEqual(caught.exception.status_code, 503)
+
+    def test_four_hour_limit_is_capped_at_250_without_provider_request(self):
+        service = market()
+        with patch("services.coinbase_market_service.requests.get") as get:
+            with self.assertRaises(ValueError):
+                service.get_candles("4h", 251)
+        get.assert_not_called()
+
+    @patch("services.coinbase_market_service.requests.get")
+    def test_http_418_is_not_retried(self, get):
+        get.return_value = response({}, status=418)
+        with self.assertRaises(CoinbaseMarketDataError) as caught:
+            market()._request_json("/products")
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(get.call_count, 1)
+
+    def test_sol_usd_product_is_rejected(self):
+        with self.assertRaises(ValueError):
+            CoinbaseMarketService("SOL-USD")
 
 
 if __name__ == "__main__":
