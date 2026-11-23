@@ -76,6 +76,7 @@ def get_coinbase_candles(
         raise _coinbase_http_error(error) from None
 
     complete = bool(result["complete"])
+    synthetic_timestamps = set(result.get("synthetic_timestamps", []))
     return {
         "symbol": _product_symbol(product_id),
         "product_id": product_id,
@@ -89,17 +90,19 @@ def get_coinbase_candles(
                 "low": float(row[3]),
                 "close": float(row[4]),
                 "volume": float(row[5]),
+                "synthetic": int(row[0]) in synthetic_timestamps,
             }
             for row in result["candles"]
         ],
         "candles_requested": result["requested"],
         "candles_returned": result["returned"],
+        "synthetic_count": result.get("synthetic_count", 0),
         "complete": complete,
         "history_exhausted": result["history_exhausted"],
         "provider_page_short": result["provider_page_short"],
         "warning": (
             None if complete
-            else "Histórico incompleto: Coinbase no devolvió todas las velas cerradas solicitadas."
+            else "Histórico incompleto: Coinbase no devolvió todas las velas cerradas solicitadas o faltan velas iniciales sin cierre previo."
         ),
         "mode": "paper",
     }
