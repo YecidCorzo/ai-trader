@@ -22,6 +22,8 @@ class FakeCoinbaseMarketService:
             "provider_page_short": False,
             "requested": 1,
             "returned": 1,
+            "synthetic_count": 0,
+            "synthetic_timestamps": [],
         }
         self.price_error = None
         self.candle_error = None
@@ -107,9 +109,11 @@ class CoinbaseMarketRoutesTests(unittest.TestCase):
             "low": 119.0,
             "close": 123.0,
             "volume": 456.0,
+            "synthetic": False,
         }])
         self.assertEqual(payload["candles_requested"], 1)
         self.assertEqual(payload["candles_returned"], 1)
+        self.assertEqual(payload["synthetic_count"], 0)
         self.assertTrue(payload["complete"])
         self.assertIsNone(payload["warning"])
         self.assertEqual(payload["mode"], "paper")
@@ -163,6 +167,32 @@ class CoinbaseMarketRoutesTests(unittest.TestCase):
             "Proveedor Coinbase de datos de mercado no disponible",
         )
         self.assertNotIn("upstream", response.text)
+
+
+    def test_candles_endpoint_exposes_synthetic_marker_and_count(self):
+        self.fake.candle_result.update({
+            "candles": [
+                [1_800_000_000_000, 120.0, 125.0, 119.0, 123.0, 456.0],
+                [1_800_003_600_000, 123.0, 123.0, 123.0, 123.0, 0.0],
+            ],
+            "requested": 2,
+            "returned": 2,
+            "synthetic_count": 1,
+            "synthetic_timestamps": [1_800_003_600_000],
+        })
+        response = self.client.get("/api/coinbase/candles?interval=1h&limit=2")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["synthetic_count"], 1)
+        self.assertFalse(payload["candles"][0]["synthetic"])
+        self.assertTrue(payload["candles"][1]["synthetic"])
+        self.assertEqual(payload["candles"][1]["volume"], 0.0)
+
+
+    def test_four_hour_endpoint_rejects_limits_above_250_before_provider_call(self):
+        response = self.client.get("/api/coinbase/candles?interval=4h&limit=251")
+        self.assertEqual(response.status_code, 422)
+        self.assertIsNone(self.fake.last_candle_call)
 
 
 if __name__ == "__main__":
