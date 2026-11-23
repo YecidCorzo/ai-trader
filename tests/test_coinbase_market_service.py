@@ -109,7 +109,7 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
             response(products_payload()),
             response(hourly),
             response([]),
-            response({"time": "2023-12-31T23:00:00Z"}),
+            response({"time": "2024-01-01T03:30:00Z"}),
         ]
         with self.assertRaises(CoinbaseMarketDataError):
             market(now_ms=BASE_TIME + 4 * HOUR).get_candles("4h", 1)
@@ -160,7 +160,7 @@ class CoinbaseMarketServiceTests(unittest.TestCase):
             response(products_payload()),
             response([raw_candle(BASE_TIME)]),
             response([]),
-            response({"time": "2024-01-01T01:00:00Z"}),
+            response({"time": "2024-01-01T02:30:00Z"}),
         ]
         with self.assertRaises(CoinbaseMarketDataError) as caught:
             market(now_ms=BASE_TIME + 3 * HOUR).get_candles("1h", 1)
