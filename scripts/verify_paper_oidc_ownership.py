@@ -75,6 +75,47 @@ def expect_status(label: str, response: requests.Response, expected: int) -> Non
     print(f"PASS {label}: HTTP {expected}")
 
 
+def _account_financial_snapshot(account: dict) -> dict[str, Decimal]:
+    """Read exact persisted PAPER financial fields without float coercion."""
+    snapshot = {}
+    for field in ("balance", "equity", "free_cash"):
+        try:
+            value = Decimal(str(account[field]))
+        except (KeyError, InvalidOperation, TypeError, ValueError):
+            raise RuntimeError(f"La respuesta PAPER no contiene un {field} decimal válido.") from None
+        if not value.is_finite():
+            raise RuntimeError(f"La respuesta PAPER contiene un {field} no finito.")
+        snapshot[field] = value
+    return snapshot
+
+
+def _assert_account_state_unchanged(
+    before_account: dict,
+    after_account: dict,
+    before_risk: dict,
+    after_risk: dict,
+    before_events: dict,
+    after_events: dict,
+    before_trades: dict,
+    after_trades: dict,
+) -> None:
+    """Fail if denied cross-owner requests changed any persisted account state."""
+    if _account_financial_snapshot(before_account) != _account_financial_snapshot(after_account):
+        raise RuntimeError("FALLO: balance/equity/free_cash cambiaron tras los intentos no autorizados.")
+    if before_risk != after_risk:
+        raise RuntimeError("FALLO: el estado del circuit breaker cambió tras los intentos no autorizados.")
+    if before_events != after_events:
+        raise RuntimeError("FALLO: el ledger o los eventos de auditoría cambiaron tras los intentos no autorizados.")
+    if before_trades != after_trades:
+        raise RuntimeError("FALLO: el historial de operaciones cambió tras los intentos no autorizados.")
+    if before_trades.get("trades"):
+        raise RuntimeError("La cuenta nueva de aceptación ya contiene operaciones; usa una cuenta de prueba vacía.")
+    if before_account.get("open_positions") or after_account.get("open_positions"):
+        raise RuntimeError("FALLO: la prueba de ownership no debía dejar posiciones abiertas.")
+    if after_account.get("live_trading_authorized") is not False:
+        raise RuntimeError("FALLO: la cuenta PAPER no confirmó live_trading_authorized=false.")
+
+
 def api_request(
     session: requests.Session,
     base_url: str,
@@ -207,6 +248,24 @@ def main() -> int:
     }:
         raise RuntimeError("La cuenta recién creada no aparece en el listado de identity A.")
 
+    owner_a_risk_before = api_request(
+        session, base_url, "GET", f"/api/paper/accounts/{account_id}/risk", token=token_a
+    )
+    expect_status("identity A reads initial circuit breaker", owner_a_risk_before, 200)
+    owner_a_events_before = api_request(
+        session, base_url, "GET", f"/api/paper/accounts/{account_id}/events", token=token_a
+    )
+    expect_status("identity A reads initial ledger", owner_a_events_before, 200)
+    owner_a_trades_before = api_request(
+        session, base_url, "GET", f"/api/paper/accounts/{account_id}/trades", token=token_a
+    )
+    expect_status("identity A reads initial trade history", owner_a_trades_before, 200)
+    if owner_a_trades_before.json().get("trades"):
+        raise RuntimeError("La cuenta nueva de aceptación ya contiene operaciones; usa una cuenta de prueba vacía.")
+    if account_payload.get("open_positions"):
+        raise RuntimeError("La cuenta nueva de aceptación ya contiene posiciones abiertas.")
+    print("PASS snapshot inicial de equity, circuit breaker, ledger y operaciones")
+
     owner_b_list = api_request(
         session, base_url, "GET", "/api/paper/accounts", token=token_b
     )
@@ -275,11 +334,30 @@ def main() -> int:
         session, base_url, "GET", account_path, token=token_a
     )
     expect_status("identity A retains access after identity B attempts", owner_a_after, 200)
-    after_payload = owner_a_after.json()
-    if Decimal(str(after_payload["balance"])) != capital:
-        raise RuntimeError("FALLO: balance cambió tras los intentos no autorizados de identity B.")
-    if after_payload.get("open_positions"):
-        raise RuntimeError("FALLO: esta prueba de autorización no debía abrir posiciones.")
+    owner_a_risk_after = api_request(
+        session, base_url, "GET", f"{account_path}/risk", token=token_a
+    )
+    expect_status("identity A reads circuit breaker after denied requests", owner_a_risk_after, 200)
+    owner_a_events_after = api_request(
+        session, base_url, "GET", f"{account_path}/events", token=token_a
+    )
+    expect_status("identity A reads ledger after denied requests", owner_a_events_after, 200)
+    owner_a_trades_after = api_request(
+        session, base_url, "GET", f"{account_path}/trades", token=token_a
+    )
+    expect_status("identity A reads trade history after denied requests", owner_a_trades_after, 200)
+
+    _assert_account_state_unchanged(
+        account_payload,
+        owner_a_after.json(),
+        owner_a_risk_before.json(),
+        owner_a_risk_after.json(),
+        owner_a_events_before.json(),
+        owner_a_events_after.json(),
+        owner_a_trades_before.json(),
+        owner_a_trades_after.json(),
+    )
+    print("PASS balance, equity, free cash, breaker, ledger and trade history unchanged")
 
     print("\nRESULTADO: PASS — aislamiento HTTP entre dos identidades OIDC.")
     print("La cuenta de prueba queda guardada en la base PAPER persistente.")
