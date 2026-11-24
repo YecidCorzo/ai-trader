@@ -4,8 +4,6 @@ import base64
 import json
 import unittest
 
-from decimal import Decimal
-
 from scripts.verify_paper_oidc_ownership import (
     _assert_account_state_unchanged,
     _ensure_distinct_test_identities,
@@ -85,6 +83,14 @@ class PaperOidcAcceptanceHelperTests(unittest.TestCase):
             trades={"trades": [{"id": "unexpected-trade", "status": "OPEN"}]},
             message="historial de operaciones",
         )
+
+    def test_rejects_live_trading_authorization_flag(self):
+        account, risk, events, trades = self.state()
+        with self.assertRaisesRegex(RuntimeError, "live_trading_authorized"):
+            _assert_account_state_unchanged(
+                account, {**account, "live_trading_authorized": True},
+                risk, risk, events, events, trades, trades,
+            )
 
     def test_rejects_non_finite_financial_values(self):
         account, risk, events, trades = self.state()
