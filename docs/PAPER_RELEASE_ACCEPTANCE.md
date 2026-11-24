@@ -84,9 +84,10 @@ Expected: balance, equity and free cash are decimal strings; the opening balance
 A helper script is available at `scripts/verify_paper_oidc_ownership.py`. It
 creates one persistent account with explicitly supplied fictional capital for
 identity A, then checks that identity B cannot discover, read, fund, trade,
-halt, reset or inspect that account. It also verifies that identity A retains
-access and the account balance was not changed by identity B's rejected
-requests.
+halt, reset or inspect that account. It snapshots balance, equity, free
+cash, circuit-breaker state, account/trade audit events and trade history
+before identity B's negative requests, then fails if any of those values
+change. The fresh account must have no trades or open positions.
 
 Run it only against a dedicated PAPER acceptance database. It does not open a
 trade and does not send any exchange order. The created account remains in the
@@ -107,8 +108,9 @@ python scripts/verify_paper_oidc_ownership.py --confirm-create
 Use two different Keycloak test users and short-lived Bearer access tokens with
 the configured API audience. The script never prints tokens. It prints the
 created `ACCOUNT_ID`; record it with the test run. A successful result is
-provider-backed evidence for the HTTP ownership boundary only, not full
-trade/ledger release acceptance.
+provider-backed evidence for the HTTP ownership boundary and non-mutation of
+the PAPER ledger; it is still not the full trade-open/close and realized-P&L
+reconciliation acceptance in steps 4–5.
 
 ## 4. Verify analysis and simulated trade execution
 
