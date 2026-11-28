@@ -10,6 +10,10 @@ from pathlib import Path
 
 from services.market_services import MarketService
 from services.backtest_research import run_advanced_strategy_walk_forward_backtests
+from services.backtest_reconciliation import (
+    BacktestReconciliationError,
+    reconcile_walk_forward_ledger,
+)
 from services.strategy_acceptance import (
     ADVANCED_STRATEGY_ACCEPTANCE_CONFIG,
     evaluate_advanced_strategy_go_no_go,
@@ -68,6 +72,14 @@ def main() -> int:
             ],
         }
 
+    if walk_forward["folds"]:
+        try:
+            ledger_reconciliation = reconcile_walk_forward_ledger(walk_forward)
+        except BacktestReconciliationError as error:
+            ledger_reconciliation = {"status": "FAILED", "error": str(error)}
+    else:
+        ledger_reconciliation = {"status": "NOT_APPLICABLE", "reason": "no OOS folds were run"}
+
     decision = evaluate_advanced_strategy_go_no_go(walk_forward)
     report = {
         "report_generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -85,6 +97,7 @@ def main() -> int:
         "history_start": candles[0][0] if candles else None,
         "history_end": candles[-1][0] if candles else None,
         "decision": decision,
+        "ledger_reconciliation": ledger_reconciliation,
         "walk_forward": walk_forward,
         "safety": {
             "exchange_credentials_used": False,
@@ -99,6 +112,10 @@ def main() -> int:
     serialized = json.dumps(report, indent=2, sort_keys=True, default=str)
     output.write_text(serialized + "\n", encoding="utf-8")
     print(serialized)
+    if ledger_reconciliation["status"] == "FAILED":
+        # Publish the report for audit, but fail the job: an unreconciled
+        # ledger cannot support either a GO or a NO_GO decision.
+        return 1
     # NO_GO is a valid research outcome and must still publish the full report.
     return 0
 
